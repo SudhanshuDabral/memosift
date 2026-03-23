@@ -203,6 +203,9 @@ const ENTROPY_MULTIPLIERS: Record<Pressure, number> = {
   [Pressure.CRITICAL]: 0.55,
 };
 
+/** A single config field override: [original_value, effective_value]. */
+export type OverrideEntry = [original: unknown, effective: unknown];
+
 /** Computed adaptive thresholds from Layer 0 context assessment. */
 export interface AdaptiveOverrides {
   readonly pressure: Pressure;
@@ -211,6 +214,12 @@ export interface AdaptiveOverrides {
   readonly enableObservationMasking: boolean;
   readonly engineGates: ReadonlySet<string>;
   readonly contextWindow: ContextWindowState;
+  /**
+   * Fields overridden by adaptive compression.
+   * Maps field name to [original_value, effective_value].
+   * Empty when skipCompression is true.
+   */
+  readonly overrides: Record<string, OverrideEntry>;
 }
 
 // Engine sets per pressure level.
@@ -267,6 +276,7 @@ export function computeAdaptiveThresholds(
       enableObservationMasking: false,
       engineGates: ENGINES_NONE,
       contextWindow: state,
+      overrides: {},
     };
   }
 
@@ -308,6 +318,27 @@ export function computeAdaptiveThresholds(
     enableSummarization: effectiveSummarization,
   };
 
+  // Track which fields were overridden.
+  const overrides: Record<string, OverrideEntry> = {};
+  if (effectiveRecent !== config.recentTurns) {
+    overrides.recentTurns = [config.recentTurns, effectiveRecent];
+  }
+  if (effectiveBudget !== config.tokenBudget) {
+    overrides.tokenBudget = [config.tokenBudget, effectiveBudget];
+  }
+  if (effectivePrune !== config.tokenPruneKeepRatio) {
+    overrides.tokenPruneKeepRatio = [config.tokenPruneKeepRatio, effectivePrune];
+  }
+  if (effectiveEntropy !== config.entropyThreshold) {
+    overrides.entropyThreshold = [config.entropyThreshold, effectiveEntropy];
+  }
+  if (effectiveTier !== config.performanceTier) {
+    overrides.performanceTier = [config.performanceTier, effectiveTier];
+  }
+  if (effectiveSummarization !== config.enableSummarization) {
+    overrides.enableSummarization = [config.enableSummarization, effectiveSummarization];
+  }
+
   return {
     pressure: p,
     effectiveConfig,
@@ -315,6 +346,7 @@ export function computeAdaptiveThresholds(
     enableObservationMasking: p === Pressure.HIGH || p === Pressure.CRITICAL,
     engineGates: PRESSURE_ENGINES[p],
     contextWindow: state,
+    overrides,
   };
 }
 

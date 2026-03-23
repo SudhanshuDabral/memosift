@@ -187,6 +187,7 @@ export async function compressAdkEvents(
     config?: Partial<MemoSiftConfig> | null;
     task?: string | null;
     ledger?: AnchorLedger | null;
+    contextWindow?: import("../core/context-window.js").ContextWindowState | null;
   },
 ): Promise<{ events: Record<string, unknown>[]; report: CompressResult["report"] }> {
   const memosiftMsgs = adaptIn(events);
@@ -195,6 +196,7 @@ export async function compressAdkEvents(
     config: options?.config,
     task: options?.task,
     ledger: options?.ledger,
+    contextWindow: options?.contextWindow,
   });
   return { events: adaptOut(compressed), report };
 }

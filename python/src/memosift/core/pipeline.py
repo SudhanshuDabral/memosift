@@ -169,6 +169,7 @@ async def compress(
         _user_turn_count = sum(1 for m in messages if m.role == "user")
         adaptive = compute_adaptive_thresholds(cw_state, config, total_user_turns=_user_turn_count)
         config = adaptive.effective_config
+        report.adaptive_overrides = adaptive.overrides
         report.add_decision(
             layer="L0_adaptive",
             action="computed",
@@ -180,7 +181,8 @@ async def compress(
                 f"model={cw_state.model}, "
                 f"remaining={cw_state.remaining_ratio:.0%}, "
                 f"recent_turns={config.recent_turns}, "
-                f"budget={config.token_budget}"
+                f"budget={config.token_budget}, "
+                f"overrides={adaptive.overrides}"
             ),
         )
 

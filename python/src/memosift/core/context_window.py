@@ -275,6 +275,13 @@ class AdaptiveOverrides:
     context_window: ContextWindowState
     """The context window state used to compute these overrides."""
 
+    overrides: dict[str, tuple[object, object]] = dataclasses.field(default_factory=dict)
+    """Fields that were overridden by adaptive compression.
+
+    Maps field name to ``(original_value, effective_value)`` for every config
+    field that was changed. Empty when ``skip_compression`` is True.
+    """
+
 
 # Engine sets per pressure level.
 _ENGINES_NONE: frozenset[str] = frozenset()
@@ -414,15 +421,31 @@ def compute_adaptive_thresholds(
     # ── Observation masking at HIGH+ pressure ──
     enable_obs = pressure in (Pressure.HIGH, Pressure.CRITICAL)
 
+    # ── Track which fields were overridden ──
+    overrides: dict[str, tuple[object, object]] = {}
+    if effective_recent != config.recent_turns:
+        overrides["recent_turns"] = (config.recent_turns, effective_recent)
+    if effective_budget != config.token_budget:
+        overrides["token_budget"] = (config.token_budget, effective_budget)
+    if effective_prune != config.token_prune_keep_ratio:
+        overrides["token_prune_keep_ratio"] = (config.token_prune_keep_ratio, effective_prune)
+    if effective_entropy != config.entropy_threshold:
+        overrides["entropy_threshold"] = (config.entropy_threshold, effective_entropy)
+    if effective_tier != config.performance_tier:
+        overrides["performance_tier"] = (config.performance_tier, effective_tier)
+    if effective_summarization != config.enable_summarization:
+        overrides["enable_summarization"] = (config.enable_summarization, effective_summarization)
+
     logger.info(
         "L0 adaptive: pressure=%s, recent_turns=%d (was %d), budget=%s, "
-        "prune_ratio=%.2f, engines=%d active",
+        "prune_ratio=%.2f, engines=%d active, overrides=%d",
         pressure.value,
         effective_recent,
         config.recent_turns,
         effective_budget,
         effective_prune,
         len(engines),
+        len(overrides),
     )
 
     return AdaptiveOverrides(
@@ -432,6 +455,7 @@ def compute_adaptive_thresholds(
         enable_observation_masking=enable_obs,
         engine_gates=engines,
         context_window=state,
+        overrides=overrides,
     )
 
 

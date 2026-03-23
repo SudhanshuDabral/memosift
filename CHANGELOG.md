@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-23
+
+### Added
+
+- **Adaptive override transparency** — `CompressionReport.adaptive_overrides` now exposes exactly which config fields Layer 0 changed and why. Maps field name to `(original_value, effective_value)` for every overridden field (`recent_turns`, `token_budget`, `token_prune_keep_ratio`, `entropy_threshold`, `performance_tier`, `enable_summarization`). `None`/`null` when Layer 0 is inactive — fully backward compatible.
+  - `AdaptiveOverrides.overrides` field (Python: `dict[str, tuple[object, object]]`, TypeScript: `Record<string, OverrideEntry>`)
+  - `OverrideEntry` type alias in TypeScript: `[original: unknown, effective: unknown]`
+- **TypeScript Layer 0 parity** — the full adaptive compression pipeline is now wired into the TypeScript runtime. Previously, `computeAdaptiveThresholds()`, `resolveContextWindow()`, engine gates, and all multiplier tables were implemented in `context-window.ts` but never called from `pipeline.ts`. Now the TypeScript pipeline matches Python exactly: resolve → recalibrate usage → compute thresholds → replace config → short-circuit at NONE → gate engines.
+  - `contextWindow` parameter added to TypeScript `CompressOptions` interface
+  - Engine gating on all 7 compression engines via L0 `engineGates`
+  - `contextWindow` parameter added to all 5 TypeScript adapter convenience functions (`compressOpenAIMessages`, `compressAnthropicMessages`, `compressAgentSdkMessages`, `compressAdkEvents`, `compressLangChainMessages`)
+  - Anthropic and Claude Agent SDK TypeScript adapters now auto-resolve `ContextWindowState` from their `model` parameter (matching Python behavior)
+- 15 new TypeScript tests for L0 adaptive pipeline integration (`l0-adaptive.test.ts`)
+
+### Fixed
+
+- Layer 0 no longer silently overrides user config values — all overrides are tracked and surfaced in the compression report
+- TypeScript pipeline now runs Layer 0 adaptive compression (was dead code in v0.2.0)
+- TypeScript adapters now forward `contextWindow` to the pipeline (was missing in v0.2.0)
+
 ## [0.2.0] - 2026-03-23
 
 ### Added

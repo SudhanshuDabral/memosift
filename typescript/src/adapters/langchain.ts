@@ -271,6 +271,7 @@ export async function compressLangChainMessages(
     config?: Partial<MemoSiftConfig> | null;
     task?: string | null;
     ledger?: AnchorLedger | null;
+    contextWindow?: import("../core/context-window.js").ContextWindowState | null;
   },
 ): Promise<[Record<string, unknown>[], CompressionReport]> {
   const memosiftMsgs = adaptIn(messages);
@@ -279,6 +280,7 @@ export async function compressLangChainMessages(
     config: options?.config,
     task: options?.task,
     ledger: options?.ledger,
+    contextWindow: options?.contextWindow,
   });
   return [adaptOut(compressed), report];
 }

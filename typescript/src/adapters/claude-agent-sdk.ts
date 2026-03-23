@@ -345,6 +345,7 @@ export interface CompressAgentSdkOptions {
   ledger?: AnchorLedger | null;
   client?: unknown;
   model?: string;
+  contextWindow?: import("../core/context-window.js").ContextWindowState | null;
 }
 
 /**
@@ -366,12 +367,30 @@ export async function compressAgentSdkMessages(
     provider = new ClaudeAgentLLMProvider(options.client, options.model ?? "claude-sonnet-4-6");
   }
 
+  // Auto-resolve context window from model when not explicitly provided.
+  let contextWindow = options?.contextWindow ?? null;
+  if (contextWindow === null) {
+    const { resolveContextWindow, estimateTokensHeuristic } = await import(
+      "../core/context-window.js"
+    );
+    const model = options?.model ?? "claude-sonnet-4-6";
+    const contentStrings = messages.map((m) => {
+      if (typeof m === "object" && m !== null && "content" in m) {
+        const c = (m as Record<string, unknown>).content;
+        if (typeof c === "string") return c;
+      }
+      return "";
+    });
+    contextWindow = resolveContextWindow(null, model, estimateTokensHeuristic(contentStrings));
+  }
+
   const memosiftMsgs = adaptIn(messages);
   const { messages: compressed, report } = await compress(memosiftMsgs, {
     llm: provider,
     config: options?.config,
     task: options?.task,
     ledger: options?.ledger,
+    contextWindow,
   });
   return [adaptOut(compressed), report];
 }

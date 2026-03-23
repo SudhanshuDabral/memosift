@@ -19,7 +19,7 @@ export {
   resolveContextWindow,
   estimateTokensHeuristic,
 } from "./core/context-window.js";
-export type { ContextWindowState, AdaptiveOverrides } from "./core/context-window.js";
+export type { ContextWindowState, AdaptiveOverrides, OverrideEntry } from "./core/context-window.js";
 
 export { compress, CompressionCache } from "./core/pipeline.js";
 export type { CompressOptions, CompressResult } from "./core/pipeline.js";

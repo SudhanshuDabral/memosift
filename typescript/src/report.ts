@@ -30,6 +30,12 @@ export class CompressionReport {
   layers: LayerReport[] = [];
   segmentCounts: Record<string, number> = {};
   decisions: Decision[] = [];
+  /**
+   * Fields overridden by Layer 0 adaptive compression.
+   * Maps field name to [original_value, effective_value].
+   * null when Layer 0 is not active (no contextWindow provided).
+   */
+  adaptiveOverrides: Record<string, [unknown, unknown]> | null = null;
 
   addLayer(
     name: string,

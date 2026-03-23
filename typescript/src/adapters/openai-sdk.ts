@@ -207,6 +207,7 @@ export async function compressOpenAIMessages(
     config?: Partial<MemoSiftConfig> | null;
     task?: string | null;
     ledger?: AnchorLedger | null;
+    contextWindow?: import("../core/context-window.js").ContextWindowState | null;
   },
 ): Promise<{ messages: Record<string, unknown>[]; report: CompressionReport }> {
   const memosiftMsgs = adaptIn(messages);
@@ -216,6 +217,7 @@ export async function compressOpenAIMessages(
     config: options?.config ?? null,
     task: options?.task ?? null,
     ledger: options?.ledger ?? null,
+    contextWindow: options?.contextWindow ?? null,
   });
 
   return { messages: adaptOut(compressed), report };

@@ -368,6 +368,7 @@ export async function compressAnthropicMessages(
     ledger?: AnchorLedger | null;
     client?: unknown;
     model?: string;
+    contextWindow?: import("../core/context-window.js").ContextWindowState | null;
   },
 ): Promise<[AnthropicCompressedResult, CompressionReport]> {
   const system = options?.system ?? null;
@@ -380,6 +381,24 @@ export async function compressAnthropicMessages(
     provider = new AnthropicLLMProvider(options.client, model);
   }
 
+  // Auto-resolve context window from model when not explicitly provided.
+  let contextWindow = options?.contextWindow ?? null;
+  if (contextWindow === null) {
+    const { resolveContextWindow, estimateTokensHeuristic } = await import(
+      "../core/context-window.js"
+    );
+    const contentStrings = messages.map((m) => {
+      const c = m.content;
+      if (typeof c === "string") return c;
+      if (Array.isArray(c))
+        return c
+          .map((b: Record<string, unknown>) => (typeof b.text === "string" ? b.text : ""))
+          .join(" ");
+      return "";
+    });
+    contextWindow = resolveContextWindow(null, model, estimateTokensHeuristic(contentStrings));
+  }
+
   const memosiftMsgs = adaptIn(messages, system);
 
   const compressOpts: CompressOptions = {
@@ -387,6 +406,7 @@ export async function compressAnthropicMessages(
     config: options?.config ?? undefined,
     task,
     ledger,
+    contextWindow,
   };
 
   const { messages: compressed, report } = await compress(memosiftMsgs, compressOpts);

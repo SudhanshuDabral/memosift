@@ -5,6 +5,13 @@ import { createConfig } from "../config.js";
 import type { MemoSiftLLMProvider } from "../providers/base.js";
 import { HeuristicTokenCounter } from "../providers/heuristic.js";
 import { CompressionReport } from "../report.js";
+import type { AdaptiveOverrides, ContextWindowState } from "./context-window.js";
+import {
+  Pressure,
+  computeAdaptiveThresholds,
+  estimateTokensHeuristic,
+  resolveContextWindow,
+} from "./context-window.js";
 import { extractAnchorsFromSegments, extractReasoningChains } from "./anchor-extractor.js";
 import { enforceBudget } from "./budget.js";
 import { classifyMessages } from "./classifier.js";
@@ -103,6 +110,7 @@ export interface CompressOptions {
   ledger?: AnchorLedger | null;
   crossWindow?: CrossWindowState | null;
   cache?: CompressionCache | null;
+  contextWindow?: ContextWindowState | null;
 }
 
 export interface CompressResult {
@@ -114,13 +122,59 @@ export async function compress(
   messages: MemoSiftMessage[],
   options?: CompressOptions,
 ): Promise<CompressResult> {
-  const config = options?.config ? createConfig(options.config) : createConfig();
+  let config = options?.config ? createConfig(options.config) : createConfig();
   const llm = options?.llm ?? null;
   const task = options?.task ?? null;
   const ledger = options?.ledger ?? null;
   const crossWindow = options?.crossWindow ?? null;
   const report = new CompressionReport();
   const counter: MemoSiftLLMProvider = llm ?? new HeuristicTokenCounter();
+
+  // ── Layer 0: Context-Aware Adaptive Thresholds ──
+  const contentStrings = messages.map((m) => m.content);
+  let cwState = resolveContextWindow(
+    options?.contextWindow ?? config.contextWindow,
+    config.modelName,
+    estimateTokensHeuristic(contentStrings),
+  );
+
+  // Ensure current_usage reflects actual message tokens.
+  if (cwState !== null) {
+    const estMsgTokens = estimateTokensHeuristic(contentStrings);
+    if (estMsgTokens > cwState.currentUsageTokens) {
+      cwState = { ...cwState, currentUsageTokens: estMsgTokens };
+    }
+  }
+
+  let adaptive: AdaptiveOverrides | null = null;
+  if (cwState !== null) {
+    const userTurnCount = messages.filter((m) => m.role === "user").length;
+    adaptive = computeAdaptiveThresholds(cwState, config, userTurnCount);
+    config = adaptive.effectiveConfig;
+    report.adaptiveOverrides = adaptive.overrides;
+    report.addDecision(
+      "L0_adaptive",
+      "computed",
+      -1,
+      0,
+      0,
+      `pressure=${adaptive.pressure}, model=${cwState.model}, ` +
+        `remaining=${Math.round((1 - cwState.currentUsageTokens / Math.max(1, cwState.contextWindowTokens - cwState.outputReserveTokens)) * 100)}%, ` +
+        `recentTurns=${config.recentTurns}, budget=${config.tokenBudget}, ` +
+        `overrides=${JSON.stringify(adaptive.overrides)}`,
+    );
+
+    // Short-circuit: at NONE pressure, no compression needed.
+    if (adaptive.skipCompression) {
+      const origTokens = estimateTokensHeuristic(contentStrings);
+      report.finalize(origTokens, origTokens, config.costPer1kTokens);
+      return { messages: [...messages], report };
+    }
+  }
+
+  // Helper: check if an engine is allowed by adaptive gating.
+  const engineAllowed = (name: string): boolean =>
+    adaptive === null || adaptive.engineGates.has(name);
 
   // ── Three-Zone Partitioning ──
   const [zone1, zone2, zone3] = partitionZones(messages);
@@ -204,18 +258,20 @@ export async function compress(
       )) ?? segments;
   }
 
-  // ── Layer 3: Engines ──
+  // ── Layer 3: Engines (gated by L0 adaptive when active) ──
   // Track content hashes for first-read vs re-read detection (Item 2.2).
   const seenContentHashes = new Map<string, number>();
-  segments =
-    (await runLayer(
-      "engine_verbatim",
-      async () => verbatimCompress(segments!, config, ledger, seenContentHashes),
-      segments,
-      report,
-    )) ?? segments;
+  if (engineAllowed("verbatim")) {
+    segments =
+      (await runLayer(
+        "engine_verbatim",
+        async () => verbatimCompress(segments!, config, ledger, seenContentHashes),
+        segments,
+        report,
+      )) ?? segments;
+  }
 
-  if (tier !== "ultra_fast") {
+  if (tier !== "ultra_fast" && engineAllowed("pruner")) {
     segments =
       (await runLayer(
         "engine_pruner",
@@ -225,20 +281,22 @@ export async function compress(
       )) ?? segments;
   }
 
-  segments =
-    (await runLayer(
-      "engine_structural",
-      async () => structuralCompress(segments!, config, ledger),
-      segments,
-      report,
-    )) ?? segments;
+  if (engineAllowed("structural")) {
+    segments =
+      (await runLayer(
+        "engine_structural",
+        async () => structuralCompress(segments!, config, ledger),
+        segments,
+        report,
+      )) ?? segments;
+  }
 
   // ── Conversation Phase Detection ──
   const phase = detectPhase(segments);
   const phaseMult = PHASE_KEEP_MULTIPLIERS.get(phase) ?? 1.0;
 
   // ── Layer 3G: Importance Scoring (scoring only, no deletion) ──
-  if (!["fast", "ultra_fast"].includes(tier)) {
+  if (!["fast", "ultra_fast"].includes(tier) && engineAllowed("importance")) {
     segments =
       (await runLayer(
         "importance_scorer",
@@ -249,7 +307,7 @@ export async function compress(
   }
 
   // ── Layer 3E: Query-Relevance Pruning (uses shields from L3G) ──
-  if (!["fast", "ultra_fast"].includes(tier)) {
+  if (!["fast", "ultra_fast"].includes(tier) && engineAllowed("relevance_pruner")) {
     segments =
       (await runLayer(
         "relevance_pruner",
@@ -260,7 +318,7 @@ export async function compress(
   }
 
   // ── Layer 3F: Elaboration Compression (uses shields from L3G) ──
-  if (tier !== "ultra_fast") {
+  if (tier !== "ultra_fast" && engineAllowed("discourse")) {
     segments =
       (await runLayer(
         "discourse_compressor",
@@ -270,8 +328,8 @@ export async function compress(
       )) ?? segments;
   }
 
-  // Engine D: Summarization (LLM-dependent, opt-in).
-  if (config.enableSummarization && llm) {
+  // Engine D: Summarization (LLM-dependent, opt-in or auto-enabled at CRITICAL).
+  if (config.enableSummarization && llm && engineAllowed("summarizer")) {
     segments =
       (await runLayer(
         "engine_summarizer",
