@@ -17,8 +17,10 @@ from memosift.core.types import (
     ToolCall,
     ToolCallFunction,
 )
+from memosift.detect import detect_framework
 from memosift.providers.base import LLMResponse, MemoSiftLLMProvider
 from memosift.report import CompressionReport, Decision, LayerReport
+from memosift.session import MemoSiftSession
 
 __all__ = [
     "AnchorCategory",
@@ -33,9 +35,11 @@ __all__ = [
     "ContentType",
     "Decision",
     "DependencyMap",
+    "detect_framework",
     "MemoSiftConfig",
     "MemoSiftLLMProvider",
     "MemoSiftMessage",
+    "MemoSiftSession",
     "Pressure",
     "MODEL_BUDGET_DEFAULTS",
     "MODEL_PRICING",

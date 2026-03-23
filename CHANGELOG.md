@@ -5,12 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-23
+
+### Added
+
+- **`MemoSiftSession` — the recommended entry point for MemoSift.** A stateful session class that owns the `AnchorLedger`, `CrossWindowState`, and `CompressionCache` internally, collapsing the raw API from 7 objects + 51 knobs into a single constructor + a single `compress()` call. Available in both Python and TypeScript.
+  ```python
+  from memosift import MemoSiftSession
+  session = MemoSiftSession("coding", model="claude-sonnet-4-6")
+  compressed, report = await session.compress(messages, usage_tokens=150_000)
+  ```
+  - `compress()` — accepts framework-native messages (auto-detected), returns compressed messages in the same format
+  - `check_pressure()` — check context window pressure without compressing
+  - `reconfigure()` — change config (preset/overrides) while preserving accumulated session state
+  - `expand()` — re-expand a previously compressed message from cache
+  - `save_state()` / `load_state()` — persist ledger + dedup hashes to JSON (cache is session-lifecycle only, not serialized)
+  - `ledger`, `facts`, `last_report`, `system` properties
+  - State file includes `"version": 1` for forward-compatible schema evolution
+- **Framework auto-detection** (`detect_framework()`) — inspects message shape via duck typing to determine the source SDK (OpenAI, Anthropic, Claude Agent SDK, Google ADK, LangChain, or MemoSiftMessage). No framework imports required. Detection is cached after the first `compress()` call.
+- `MemoSiftSession` and `detect_framework` exported from both `memosift` (Python) and `memosift` (npm)
+- 44 new Python tests (18 detect + 26 session)
+- 37 new TypeScript tests (14 detect + 23 session)
+
 ## [0.3.0] - 2026-03-23
 
 ### Added
 
 - **Adaptive override transparency** — `CompressionReport.adaptive_overrides` now exposes exactly which config fields Layer 0 changed and why. Maps field name to `(original_value, effective_value)` for every overridden field (`recent_turns`, `token_budget`, `token_prune_keep_ratio`, `entropy_threshold`, `performance_tier`, `enable_summarization`). `None`/`null` when Layer 0 is inactive — fully backward compatible.
-  - `AdaptiveOverrides.overrides` field (Python: `dict[str, tuple[object, object]]`, TypeScript: `Record<string, OverrideEntry>`)
+  - `AdaptiveOverrides.overrides` field (Python: immutable `MappingProxyType`, TypeScript: `Record<string, OverrideEntry>`)
   - `OverrideEntry` type alias in TypeScript: `[original: unknown, effective: unknown]`
 - **TypeScript Layer 0 parity** — the full adaptive compression pipeline is now wired into the TypeScript runtime. Previously, `computeAdaptiveThresholds()`, `resolveContextWindow()`, engine gates, and all multiplier tables were implemented in `context-window.ts` but never called from `pipeline.ts`. Now the TypeScript pipeline matches Python exactly: resolve → recalibrate usage → compute thresholds → replace config → short-circuit at NONE → gate engines.
   - `contextWindow` parameter added to TypeScript `CompressOptions` interface

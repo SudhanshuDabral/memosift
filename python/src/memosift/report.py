@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 @dataclass
@@ -46,11 +50,11 @@ class CompressionReport:
     segment_counts: dict[str, int] = field(default_factory=dict)
     decisions: list[Decision] = field(default_factory=list)
     performance_tier: str = "full"
-    adaptive_overrides: dict[str, tuple[object, object]] | None = None
+    adaptive_overrides: Mapping[str, tuple[object, object]] | None = None
     """Fields overridden by Layer 0 adaptive compression.
 
     Maps field name to ``(original_value, effective_value)``. ``None`` when
-    Layer 0 is not active (no context_window provided). Empty dict when L0
+    Layer 0 is not active (no context_window provided). Empty mapping when L0
     ran but no fields were changed.
     """
 

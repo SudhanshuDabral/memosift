@@ -275,11 +275,14 @@ class AdaptiveOverrides:
     context_window: ContextWindowState
     """The context window state used to compute these overrides."""
 
-    overrides: dict[str, tuple[object, object]] = dataclasses.field(default_factory=dict)
+    overrides: MappingProxyType[str, tuple[object, object]] = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Fields that were overridden by adaptive compression.
 
     Maps field name to ``(original_value, effective_value)`` for every config
     field that was changed. Empty when ``skip_compression`` is True.
+    Immutable (MappingProxyType) to match the frozen dataclass contract.
     """
 
 
@@ -455,7 +458,7 @@ def compute_adaptive_thresholds(
         enable_observation_masking=enable_obs,
         engine_gates=engines,
         context_window=state,
-        overrides=overrides,
+        overrides=MappingProxyType(overrides),
     )
 
 

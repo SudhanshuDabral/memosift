@@ -61,6 +61,14 @@ export type { Decision, LayerReport } from "./report.js";
 export type { MemoSiftLLMProvider, LLMResponse } from "./providers/base.js";
 export { HeuristicTokenCounter } from "./providers/heuristic.js";
 
+// Session Facade — the recommended entry point.
+export { MemoSiftSession } from "./session.js";
+export type { MemoSiftSessionOptions, SessionCompressOptions } from "./session.js";
+
+// Framework auto-detection.
+export { detectFramework, VALID_FRAMEWORKS } from "./detect.js";
+export type { Framework } from "./detect.js";
+
 // Adapters — re-exported for convenience, also available via deep imports.
 export {
   adaptIn as openaiAdaptIn,
