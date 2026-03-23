@@ -99,6 +99,34 @@ jobs:
         run: |
           cd typescript && npm test
 
+  mcp-server-test:
+    name: MCP Server
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install memosift (core)
+        run: |
+          cd typescript && npm ci && npm run build
+
+      - name: Install MCP server deps
+        run: |
+          cd mcp-server && npm ci
+
+      - name: Type check
+        run: |
+          cd mcp-server && npx tsc --noEmit
+
+      - name: Run MCP server tests
+        run: |
+          cd mcp-server && npx vitest run
+
   cross-language-vectors:
     name: Validate test vectors
     runs-on: ubuntu-latest

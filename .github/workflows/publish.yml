@@ -1,4 +1,4 @@
-name: Publish to PyPI & npm
+name: Publish to PyPI & npm & MCP Server
 
 # Triggers when you create a GitHub release (e.g., v0.2.0).
 # The publish steps require manual approval via GitHub Environments.
@@ -48,6 +48,12 @@ jobs:
       - name: TypeScript tests
         run: cd typescript && npm test
 
+      - name: Install MCP server deps
+        run: cd mcp-server && npm ci
+
+      - name: MCP server tests
+        run: cd mcp-server && npx vitest run
+
       - name: Python lint
         run: cd python && ruff check src/
 
@@ -83,6 +89,11 @@ jobs:
           cd typescript && npm ci && npm run build
           npm pack --dry-run
 
+      - name: Build MCP server package
+        run: |
+          cd mcp-server && npm ci && npm run build
+          npm pack --dry-run
+
       - name: Verify version consistency
         run: |
           PY_VER=$(python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml','rb'))['project']['version'])")
@@ -104,6 +115,12 @@ jobs:
         with:
           name: typescript-dist
           path: typescript/
+
+      - name: Upload MCP server artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-server-dist
+          path: mcp-server/
 
   # ── Step 3: Publish Python to PyPI (requires approval) ─────────────────
   publish-pypi:
@@ -152,3 +169,29 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ── Step 5: Publish MCP server to npm (requires approval) ───────────────
+  publish-mcp-server:
+    name: Publish MCP server to npm
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm-mcp  # ← Requires your approval in GitHub UI
+    if: ${{ !inputs.dry_run }}
+    steps:
+      - name: Download MCP server artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mcp-server-dist
+          path: mcp-server/
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish MCP server to npm
+        working-directory: mcp-server
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_MCP_TOKEN }}

@@ -80,7 +80,11 @@ def detect_framework(messages: list[Any]) -> str:
                 if isinstance(first_block, dict):
                     block_type = first_block.get("type", "")
                     if block_type in (
-                        "text", "tool_use", "tool_result", "thinking", "image",
+                        "text",
+                        "tool_use",
+                        "tool_result",
+                        "thinking",
+                        "image",
                     ):
                         return "anthropic"
 

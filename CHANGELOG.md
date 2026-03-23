@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-23
+
+### Added
+
+- **`@memosift/mcp-server` — MCP server for agent-discoverable compression tools.** A standalone npm package that exposes MemoSift's capabilities as 8 MCP tools via stdio transport. Any MCP-compatible client (Claude Desktop, Claude Code, Cursor, Windsurf) can connect and use context compression without writing code.
+  ```json
+  { "mcpServers": { "memosift": { "command": "npx", "args": ["@memosift/mcp-server"] } } }
+  ```
+  - `memosift_check_pressure` — check if compression is needed before doing it
+  - `memosift_compress` — compress messages in any framework format (OpenAI, Anthropic, LangChain, Google ADK) with `compressed_entries` for expand lookup
+  - `memosift_configure` — create/update compression sessions with presets and overrides
+  - `memosift_get_facts` — retrieve anchor facts (file paths, errors, decisions) extracted during compression
+  - `memosift_expand` — re-expand a previously compressed message to see original content
+  - `memosift_report` — detailed compression metrics (summary/layers/decisions/full)
+  - `memosift_list_sessions` — list all active sessions with metadata
+  - `memosift_destroy` — destroy sessions to free memory
+  - Session manager with configurable TTL (`MEMOSIFT_SESSION_TTL_MS`), touch-on-access, and periodic cleanup
+  - Deterministic-only by default — zero LLM calls. Engine D enabled via `MEMOSIFT_LLM_PROVIDER` env var
+  - SDK parity tests: MCP compress output matches direct adapter output for all OpenAI and Anthropic benchmark fixtures
+- `MemoSiftSession` public getters: `model`, `preset`, `framework` properties and `set_framework()` / `setFramework()` method (Python/TypeScript)
+- MCP server CI job in GitHub Actions (`ci.yml`)
+- MCP server publish job in GitHub Actions (`publish.yml`) with `npm-mcp` environment gate
+- 30 new MCP server tests (24 tool tests + 6 SDK parity tests) in `tests/mcp-server/`
+
 ## [0.4.0] - 2026-03-23
 
 ### Added

@@ -75,16 +75,12 @@ class MemoSiftSession:
         unknown = set(config_overrides) - _CONFIG_FIELDS
         if unknown:
             raise ValueError(
-                f"Unknown config fields: {sorted(unknown)}. "
-                f"Valid fields: {sorted(_CONFIG_FIELDS)}"
+                f"Unknown config fields: {sorted(unknown)}. Valid fields: {sorted(_CONFIG_FIELDS)}"
             )
 
         # Validate framework.
         if framework is not None and framework not in VALID_FRAMEWORKS:
-            raise ValueError(
-                f"Unknown framework {framework!r}. "
-                f"Valid: {sorted(VALID_FRAMEWORKS)}"
-            )
+            raise ValueError(f"Unknown framework {framework!r}. Valid: {sorted(VALID_FRAMEWORKS)}")
 
         self._model = model
         self._llm = llm
@@ -102,6 +98,7 @@ class MemoSiftSession:
         # Persistent state across compress() calls.
         self._ledger = AnchorLedger()
         from memosift.core.deduplicator import CrossWindowState
+
         self._cross_window = CrossWindowState()
         self._cache = CompressionCache()
 
@@ -143,8 +140,10 @@ class MemoSiftSession:
         # ── Build context window state ──
         context_window: ContextWindowState | None = None
         if self._model is not None:
-            tokens = usage_tokens if usage_tokens is not None else (
-                estimate_tokens_heuristic([m.content for m in internal])
+            tokens = (
+                usage_tokens
+                if usage_tokens is not None
+                else (estimate_tokens_heuristic([m.content for m in internal]))
             )
             context_window = ContextWindowState.from_model(self._model, tokens)
 
@@ -175,26 +174,32 @@ class MemoSiftSession:
 
         if fw == "openai":
             from memosift.adapters.openai_sdk import adapt_in
+
             return adapt_in(messages)
 
         if fw == "anthropic":
             from memosift.adapters.anthropic_sdk import adapt_in
+
             return adapt_in(messages, system)
 
         if fw == "agent_sdk":
             from memosift.adapters.claude_agent_sdk import adapt_in
+
             return adapt_in(messages)
 
         if fw == "adk":
             from memosift.adapters.google_adk import adapt_in
+
             return adapt_in(messages)
 
         if fw == "langchain":
             from memosift.adapters.langchain import adapt_in
+
             return adapt_in(messages)
 
         # Fallback — treat as OpenAI.
         from memosift.adapters.openai_sdk import adapt_in
+
         return adapt_in(messages)
 
     def _adapt_out(self, messages: list[MemoSiftMessage], system: str | None) -> Any:
@@ -206,27 +211,33 @@ class MemoSiftSession:
 
         if fw == "openai":
             from memosift.adapters.openai_sdk import adapt_out
+
             return adapt_out(messages)
 
         if fw == "anthropic":
             from memosift.adapters.anthropic_sdk import adapt_out
+
             result = adapt_out(messages)
             self._system = result.system
             return result.messages
 
         if fw == "agent_sdk":
             from memosift.adapters.claude_agent_sdk import adapt_out
+
             return adapt_out(messages)
 
         if fw == "adk":
             from memosift.adapters.google_adk import adapt_out
+
             return adapt_out(messages)
 
         if fw == "langchain":
             from memosift.adapters.langchain import adapt_out
+
             return adapt_out(messages)
 
         from memosift.adapters.openai_sdk import adapt_out
+
         return adapt_out(messages)
 
     def check_pressure(self, usage_tokens: int | None = None) -> Pressure:
@@ -241,6 +252,28 @@ class MemoSiftSession:
         tokens = usage_tokens if usage_tokens is not None else 0
         state = ContextWindowState.from_model(self._model, tokens)
         return state.pressure
+
+    @property
+    def model(self) -> str | None:
+        """The model name this session was created with."""
+        return self._model
+
+    @property
+    def preset(self) -> str:
+        """The current config preset name."""
+        return self._preset
+
+    @property
+    def framework(self) -> str | None:
+        """The detected or configured framework."""
+        return self._framework
+
+    def set_framework(self, framework: str) -> None:
+        """Set the framework explicitly (skips auto-detection)."""
+        if framework not in VALID_FRAMEWORKS:
+            raise ValueError(f"Unknown framework {framework!r}. Valid: {sorted(VALID_FRAMEWORKS)}")
+        self._framework = framework
+        self._framework_detected = True
 
     @property
     def ledger(self) -> AnchorLedger:
@@ -292,8 +325,7 @@ class MemoSiftSession:
         unknown = set(config_overrides) - _CONFIG_FIELDS
         if unknown:
             raise ValueError(
-                f"Unknown config fields: {sorted(unknown)}. "
-                f"Valid fields: {sorted(_CONFIG_FIELDS)}"
+                f"Unknown config fields: {sorted(unknown)}. Valid fields: {sorted(_CONFIG_FIELDS)}"
             )
 
         if preset is not None:

@@ -5,6 +5,10 @@ import { createConfig } from "../config.js";
 import type { MemoSiftLLMProvider } from "../providers/base.js";
 import { HeuristicTokenCounter } from "../providers/heuristic.js";
 import { CompressionReport } from "../report.js";
+import { extractAnchorsFromSegments, extractReasoningChains } from "./anchor-extractor.js";
+import { enforceBudget } from "./budget.js";
+import { classifyMessages } from "./classifier.js";
+import { coalesceShortMessages } from "./coalescer.js";
 import type { AdaptiveOverrides, ContextWindowState } from "./context-window.js";
 import {
   Pressure,
@@ -12,10 +16,6 @@ import {
   estimateTokensHeuristic,
   resolveContextWindow,
 } from "./context-window.js";
-import { extractAnchorsFromSegments, extractReasoningChains } from "./anchor-extractor.js";
-import { enforceBudget } from "./budget.js";
-import { classifyMessages } from "./classifier.js";
-import { coalesceShortMessages } from "./coalescer.js";
 import { deduplicate } from "./deduplicator.js";
 import { elaborateCompress } from "./engines/discourse-compressor.js";
 import { scoreImportance } from "./engines/importance.js";

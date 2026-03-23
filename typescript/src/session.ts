@@ -6,30 +6,24 @@ import { createConfig, createPreset } from "./config.js";
 import type { ContextWindowState } from "./core/context-window.js";
 import {
   Pressure,
+  pressure as computePressure,
   contextWindowFromModel,
   estimateTokensHeuristic,
-  pressure as computePressure,
 } from "./core/context-window.js";
 import { CompressionCache, compress } from "./core/pipeline.js";
 import type { CompressResult } from "./core/pipeline.js";
 import {
-  AnchorCategory,
+  type AnchorCategory,
   AnchorLedger,
   createCrossWindowState,
   createMessage,
 } from "./core/types.js";
-import type {
-  AnchorFact,
-  CrossWindowState,
-  MemoSiftMessage,
-} from "./core/types.js";
-import { detectFramework, VALID_FRAMEWORKS } from "./detect.js";
+import type { AnchorFact, CrossWindowState, MemoSiftMessage } from "./core/types.js";
+import { VALID_FRAMEWORKS, detectFramework } from "./detect.js";
 import type { Framework } from "./detect.js";
 import type { MemoSiftLLMProvider } from "./providers/base.js";
-import { CompressionReport } from "./report.js";
+import type { CompressionReport } from "./report.js";
 
-// Adapters — adaptIn/adaptOut use duck typing on plain objects, no framework SDK imports needed.
-import { adaptIn as openaiAdaptIn, adaptOut as openaiAdaptOut } from "./adapters/openai-sdk.js";
 import {
   adaptIn as anthropicAdaptIn,
   adaptOut as anthropicAdaptOut,
@@ -44,16 +38,35 @@ import {
   adaptIn as langchainAdaptIn,
   adaptOut as langchainAdaptOut,
 } from "./adapters/langchain.js";
+// Adapters — adaptIn/adaptOut use duck typing on plain objects, no framework SDK imports needed.
+import { adaptIn as openaiAdaptIn, adaptOut as openaiAdaptOut } from "./adapters/openai-sdk.js";
 
 /** Valid config field names for override validation. */
 const CONFIG_FIELDS = new Set([
-  "recentTurns", "tokenBudget", "enableSummarization", "llmRelevanceScoring",
-  "reorderSegments", "dedupSimilarityThreshold", "entropyThreshold",
-  "tokenPruneKeepRatio", "jsonArrayThreshold", "codeKeepSignatures",
-  "relevanceDropThreshold", "policies", "softCompressionPct", "fullCompressionPct",
-  "aggressiveCompressionPct", "coalesceShortMessages", "coalesceCharThreshold",
-  "enableAnchorLedger", "anchorLedgerMaxTokens", "costPer1kTokens",
-  "modelName", "deterministicSeed", "performanceTier", "preBucketBypass",
+  "recentTurns",
+  "tokenBudget",
+  "enableSummarization",
+  "llmRelevanceScoring",
+  "reorderSegments",
+  "dedupSimilarityThreshold",
+  "entropyThreshold",
+  "tokenPruneKeepRatio",
+  "jsonArrayThreshold",
+  "codeKeepSignatures",
+  "relevanceDropThreshold",
+  "policies",
+  "softCompressionPct",
+  "fullCompressionPct",
+  "aggressiveCompressionPct",
+  "coalesceShortMessages",
+  "coalesceCharThreshold",
+  "enableAnchorLedger",
+  "anchorLedgerMaxTokens",
+  "costPer1kTokens",
+  "modelName",
+  "deterministicSeed",
+  "performanceTier",
+  "preBucketBypass",
   "contextWindow",
 ]);
 
@@ -160,8 +173,7 @@ export class MemoSiftSession {
     // Build context window state.
     let contextWindow: ContextWindowState | null = null;
     if (this._model !== null) {
-      const tokens =
-        usageTokens ?? estimateTokensHeuristic(internal.map((m) => m.content));
+      const tokens = usageTokens ?? estimateTokensHeuristic(internal.map((m) => m.content));
       contextWindow = contextWindowFromModel(this._model, tokens);
     }
 
@@ -214,6 +226,27 @@ export class MemoSiftSession {
     if (this._model === null) return Pressure.NONE;
     const state = contextWindowFromModel(this._model, usageTokens ?? 0);
     return computePressure(state);
+  }
+
+  /** The model name this session was created with. */
+  get model(): string | null {
+    return this._model;
+  }
+
+  /** The current config preset name. */
+  get preset(): string {
+    return this._preset;
+  }
+
+  /** The detected or configured framework. */
+  get framework(): Framework | null {
+    return this._framework;
+  }
+
+  /** Set the framework explicitly (skips auto-detection). */
+  setFramework(framework: Framework): void {
+    this._framework = framework;
+    this._frameworkDetected = true;
   }
 
   /** The session's anchor ledger (accumulates facts across compress calls). */
@@ -311,7 +344,7 @@ export class MemoSiftSession {
   ): MemoSiftSession {
     const data = JSON.parse(readFileSync(path, "utf-8"));
 
-    const effectivePreset = preset !== "general" ? preset : data.config_preset ?? "general";
+    const effectivePreset = preset !== "general" ? preset : (data.config_preset ?? "general");
     const effectiveModel = options?.model ?? data.model ?? null;
     const effectiveFramework = options?.framework ?? data.framework ?? null;
 
