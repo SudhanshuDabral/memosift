@@ -3,9 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from memosift.core.types import CompressionPolicy, ContentType
+
+if TYPE_CHECKING:
+    from memosift.core.context_window import ContextWindowState
 
 # ── Model-aware token budget defaults ───────────────────────────────────────
 
@@ -124,6 +127,14 @@ class MemoSiftConfig:
     pre_bucket_bypass: bool = True
     """Route SYSTEM_PROMPT, USER_QUERY, RECENT_TURN, PREVIOUSLY_COMPRESSED
     segments directly past compression layers. Reduces N for all engines."""
+
+    # ── Context-aware adaptive compression ──
+    context_window: ContextWindowState | None = None
+    """Context window state for adaptive compression (Layer 0).
+    When provided, the pipeline dynamically adjusts ``recent_turns``,
+    ``token_budget``, pruning ratios, and engine selection based on the
+    model's context window utilization. Set via ``ContextWindowState.from_model()``
+    or pass explicitly. When ``None``, all thresholds use their fixed config values."""
 
     @classmethod
     def preset(cls, name: str, **overrides: Any) -> MemoSiftConfig:

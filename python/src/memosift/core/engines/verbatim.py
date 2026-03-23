@@ -51,6 +51,8 @@ def verbatim_compress(
     config: MemoSiftConfig,
     ledger: AnchorLedger | None = None,
     seen_content_hashes: dict[str, int] | None = None,
+    *,
+    enable_observation_masking: bool = False,
 ) -> list[ClassifiedMessage]:
     """Apply verbatim deletion to eligible segments.
 
@@ -114,6 +116,29 @@ def verbatim_compress(
                 continue
             else:
                 seen_content_hashes[content_hash] = seg.original_index
+
+        # Rule 0.5: Observation masking for OLD, LARGE tool results.
+        # Only enabled for long conversations (>= 10 tool results).
+        if (
+            enable_observation_masking
+            and not seg.protected
+            and seg.content
+            and len(seg.content) >= 500
+            and seg.content_type
+            in {ContentType.TOOL_RESULT_TEXT, ContentType.TOOL_RESULT_JSON}
+        ):
+            placeholder = _mask_old_observation(seg, ledger=ledger)
+            if placeholder is not None:
+                new_msg = MemoSiftMessage(
+                    role=seg.message.role,
+                    content=placeholder,
+                    name=seg.message.name,
+                    tool_call_id=seg.message.tool_call_id,
+                    tool_calls=seg.message.tool_calls,
+                    metadata=seg.message.metadata,
+                )
+                result.append(dc_replace(seg, message=new_msg))
+                continue
 
         if seg.policy in _TARGET_POLICIES:
             new_content = _compress_content(
@@ -314,3 +339,64 @@ def _truncate_with_marker(lines: list[str], max_lines: int) -> list[str]:
         + [f"[... {omitted} lines omitted — showing first {keep} and last {keep} lines ...]"]
         + lines[-keep:]
     )
+
+
+# ── Observation Masking (Rule 0.5) ───────────────────────────────────────────
+
+_QUICK_SIG_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:async\s+)?(?:class|def|function|const|let|var|interface|type|enum)\s+\w+",
+    re.MULTILINE,
+)
+
+
+def _mask_old_observation(
+    seg: ClassifiedMessage,
+    ledger: AnchorLedger | None = None,
+) -> str | None:
+    """Create a structural placeholder for an old tool result.
+
+    Preserves lines containing anchor ledger facts.
+    """
+    tool_name = seg.message.name or "tool"
+    key_args = ""
+    match = _FILE_PATH_RE.search(seg.content)
+    if match:
+        key_args = match.group(0)
+    else:
+        first_line = seg.content.split("\n", 1)[0].strip()
+        key_args = first_line[:40]
+
+    line_count = seg.content.count("\n") + 1
+    lines = seg.content.strip().split("\n")
+
+    # Structural summary.
+    sigs = [m.group(0).strip() for m in _QUICK_SIG_RE.finditer(seg.content)]
+    if sigs:
+        summary = "; ".join(sigs[:4])
+    elif len(lines) <= 3:
+        summary = seg.content[:200]
+    else:
+        first_two = " | ".join(l.strip() for l in lines[:2] if l.strip())
+        last = lines[-1].strip() or (lines[-2].strip() if len(lines) > 1 else "")
+        summary = f"{first_two} ... {last}"[:200]
+
+    args_display = f'("{key_args}")' if key_args else ""
+    parts = [f"[Tool: {tool_name}{args_display} — {line_count} lines]", f"Key: {summary}"]
+
+    # Preserve lines containing critical anchor facts.
+    if ledger is not None:
+        critical = ledger.get_critical_strings()
+        if critical:
+            preserved: list[str] = []
+            seen: set[str] = set()
+            for line in lines:
+                stripped = line.strip()
+                if stripped and stripped not in seen:
+                    line_lower = stripped.lower()
+                    if any(s.lower() in line_lower for s in critical):
+                        seen.add(stripped)
+                        preserved.append(stripped)
+            if preserved:
+                parts.append("Preserved: " + " | ".join(preserved[:10]))
+
+    return "\n".join(parts)

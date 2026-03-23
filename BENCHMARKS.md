@@ -327,48 +327,122 @@ This reduces the N in all compression layers by 15-30% depending on the conversa
 
 ---
 
-## 5. Competitive Positioning
+## 5. Adaptive Compression (Layer 0)
 
-| System | Ratio | Quality | Latency | Model Required | Open Source | Tool Integrity |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **MemoSift (default)** | **6.4x** | **96.3%** | **105ms** | **No** | **Yes** | **100%** |
-| **MemoSift (aggressive)** | **20.7x** | **89.7%** | **105ms** | **No** | **Yes** | **100%** |
-| OpenAI compact | 99x | 67% | ~1s | Yes (GPT) | No | Unknown |
-| Claude auto-compaction | 3-5x | 69% | ~1s | Yes (Claude) | No | Unknown |
-| Factory.ai | 3-5x | 74% | ~1s | Yes | No | Unknown |
-| LLMLingua-2 | 2-20x | 86-98%* | ~50ms | Yes (355M params) | Yes | Not tracked |
-| MorphLLM | 1.5-3x | 98% | ~300ms | No | No | Not tracked |
+### 5.1 Context-Aware Pressure Levels
 
-\* LLMLingua quality varies by dataset: 98.5% on GSM8K but 86.8% on BBH (13.2 point drop)
+MemoSift v0.2 introduces **adaptive compression** — the pipeline dynamically adjusts aggressiveness based on model context window utilization. Rather than using fixed thresholds, the system computes a pressure level from the remaining context capacity and tunes all parameters accordingly.
 
-### MemoSift vs LLMLingua Head-to-Head
+| Pressure | Remaining Window | Behavior | Engines Active |
+|:---------|:----------------:|:---------|:---------------|
+| **NONE** | >60% | Skip compression entirely | None |
+| **LOW** | 40–60% | Light — dedup + verbatim only | 2 |
+| **MEDIUM** | 25–40% | Standard pipeline | 5 |
+| **HIGH** | 10–25% | Aggressive — all engines, observation masking | 7 |
+| **CRITICAL** | <10% | Maximum — all engines + Engine D auto-enabled | 8 |
 
-| Dimension | MemoSift | LLMLingua | Winner |
+This means a conversation in a 1M-token model (Claude Opus 4.6) with 50K tokens consumed has NONE pressure — no compression needed, no overhead. The same conversation in a 200K-token model (Haiku 4.5) at 175K consumed has CRITICAL pressure — maximum compression fires automatically.
+
+### 5.2 Adaptive Benchmark Results (SDK Conversations)
+
+We tested all 6 SDK conversations at 6 pressure levels (36 runs deterministic, 36 runs with LLM):
+
+**Deterministic only (no LLM):**
+
+| Pressure | Avg Compression | Fact Retention | Fidelity | Tool Integrity |
+|:---------|:---------------:|:--------------:|:--------:|:--------------:|
+| NONE | 1.00x | 87.9% | 100% | ALL PASS |
+| LOW | 1.79x | 91.3% | 100% | ALL PASS |
+| MEDIUM | 2.45x | 81.4% | 100% | ALL PASS |
+| HIGH | 3.29x | 74.8% | 100% | ALL PASS |
+| CRITICAL | 3.69x | 74.8% | 100% | ALL PASS |
+
+**With LLM (Engine D enabled at CRITICAL):**
+
+| Pressure | Avg Compression | Fact Retention | Fidelity | Tool Integrity |
+|:---------|:---------------:|:--------------:|:--------:|:--------------:|
+| NONE | 1.00x | 87.9% | 100% | ALL PASS |
+| LOW | 1.85x | 91.3% | 100% | ALL PASS |
+| MEDIUM | 2.58x | 83.5% | 100% | ALL PASS |
+| HIGH | 3.17x | 79.9% | 100% | ALL PASS |
+| **CRITICAL** | **4.40x** | **79.9%** | **100%** | **ALL PASS** |
+
+Engine D at CRITICAL pressure delivered **+19% more compression** (3.69x → 4.40x) while **improving fact retention** from 74.8% to 79.9%.
+
+### 5.3 Key Properties
+
+- **Zero overhead at NONE pressure**: Pipeline short-circuits entirely — no token counting, no classification, no engine execution
+- **Percentage-based recent-turn protection**: Instead of fixed `recent_turns=2`, the system protects a percentage of turns proportional to pressure (30% at LOW → 5% at CRITICAL). A 100-turn conversation at HIGH pressure protects 8 turns, not 2.
+- **Auto-budget from remaining capacity**: Token budget is derived from available context window space, not a hardcoded number. A 200K model at 80% usage gets a tighter budget than a 1M model at 80% usage.
+- **Model-aware via registry**: 18 models across OpenAI (GPT-4o, GPT-4.1), Anthropic (Claude 4.x), and Google (Gemini 2.5) families. Unknown models fall back to 200K default.
+- **Adapter auto-resolution**: Anthropic and Claude Agent SDK adapters detect the model from the `model` parameter and compute pressure automatically — zero configuration required.
+
+### 5.4 Production Session Results (with Adaptive)
+
+On the 11 real production sessions, adaptive compression maintains the same quality as v0.1:
+
+| Preset | Avg Compression | Fact Retention | Tool Integrity |
+|:-------|:---------------:|:--------------:|:--------------:|
+| general | 5.09x | 90.5% | ALL PASS |
+| coding | 2.91x | 90.6% | ALL PASS |
+
+These sessions are large enough (264K–1M tokens) that pressure is HIGH or CRITICAL — the full pipeline fires and achieves production-grade compression.
+
+---
+
+## 6. Competitive Positioning
+
+| System | Ratio | Quality | Latency | Model Required | Open Source | Tool Integrity | Adaptive |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **MemoSift (default)** | **6.4x** | **96.3%** | **105ms** | **No** | **Yes** | **100%** | **Yes** |
+| **MemoSift (adaptive+LLM)** | **4.4x*** | **100% fidelity** | **<500ms** | **Optional** | **Yes** | **100%** | **Yes** |
+| **MemoSift (aggressive)** | **20.7x** | **89.7%** | **105ms** | **No** | **Yes** | **100%** | **Yes** |
+| OpenAI Compaction | ~86-93%** | 3.35/5.0 | ~1s | Yes (GPT) | No | 0% tool results*** | No |
+| Anthropic Compaction | ~58.6%** | 3.44/5.0 | ~1s | Yes (Claude) | No | Unknown | No |
+| Factory.ai | ~98.6%** | 3.70/5.0 | ~1s | Yes | No | Unknown | No |
+| LLMLingua-2 | 2-14x | 88-100%**** | ~50ms | Yes (355M params) | Yes | Not tracked | No |
+| Morph Compact | 50-70% | 98% (self-reported) | ~300ms | No | No | Not tracked | No |
+
+\* On SDK conversations at CRITICAL pressure. Production sessions achieve 5.09x with adaptive system.
+
+\** Competitive compression numbers come from different sources: OpenAI's 86-93% is from independent user testing (GitHub issue #14589), Anthropic's 58.6% is from their own cookbook example, Factory's 98.6% is self-reported. None of these are directly comparable — they measure different things on different datasets.
+
+\*** OpenAI Compaction discards all tool results after compaction (0% survival rate, per independent testing).
+
+\**** LLMLingua-2 quality varies by dataset: 100% on GSM8K (5x) but 88.4% on BBH (5x). Peer-reviewed numbers from ACL 2024.
+
+### What Sets MemoSift Apart
+
+| Dimension | MemoSift | Competitors | Winner |
 |:---|:---|:---|:---:|
-| Quality consistency | 94% uniform across 9 domains | 86-98% (varies by dataset) | **MemoSift** |
-| External model needed | None | XLM-RoBERTa-large (2.1GB VRAM) | **MemoSift** |
-| Tool call integrity | 100% verified across 225+ runs | Not tracked | **MemoSift** |
-| Multi-cycle stability | Deterministic (Three-Zone Model) | Not designed for multi-cycle | **MemoSift** |
-| Framework adapters | 5 (OpenAI, Anthropic, LangChain, ADK, Agent SDK) | Generic | **MemoSift** |
-| Anchor fact persistence | Structured ledger with 8 categories | None (stateless) | **MemoSift** |
-| Code/JSON awareness | AST parsing + schema-aware JSON | Token-level perplexity | **MemoSift** |
-| Max compression ratio | 20.7x (57.7x peak) | 20x (requires model) | Tie |
-| Open source | Yes | Yes | Tie |
+| **Context-aware adaptive** | Reads model context window, adjusts automatically | Fixed/manual thresholds | **MemoSift** |
+| **Quality consistency** | 96.3% uniform across 9 domains | 88-100% (varies by dataset) | **MemoSift** |
+| **External model needed** | None (optional for Engine D) | Required (LLM, GPU, or 355M param model) | **MemoSift** |
+| **Tool call integrity** | 100% verified across 300+ runs | OpenAI: 0% tool result survival | **MemoSift** |
+| **Multi-cycle stability** | Deterministic (Three-Zone Model) | OpenAI degrades to 6.9% after 2 compactions | **MemoSift** |
+| **Zero overhead** | Skips compression when window has room | Always runs (fixed pipeline) | **MemoSift** |
+| **Framework adapters** | 5 (OpenAI, Anthropic, Agent SDK, ADK, LangChain) | Generic or none | **MemoSift** |
+| **Anchor fact persistence** | Structured ledger with 8 categories | None (stateless) | **MemoSift** |
+| **Model switching** | Adapts thresholds when agent switches models mid-session | Not designed for model switching | **MemoSift** |
+| **Code/JSON awareness** | AST parsing + schema-aware JSON | Token-level perplexity | **MemoSift** |
+| **Max compression ratio** | 20.7x (57.7x peak) | LLMLingua: 14x (peer-reviewed) | **MemoSift** |
+| **Open source** | Yes | LLMLingua: Yes, others: No | Tie |
 
 ### Cost Analysis with Prompt Caching
 
 | Configuration | Compression | + Anthropic Cache (0.1x) | Effective Cost |
 |:---|:---:|:---:|:---:|
 | MemoSift default | 6.4x | 6.4x + cache | **1.6% of original** |
+| MemoSift adaptive (CRITICAL) | 4.4x | 4.4x + cache | **2.3% of original** |
 | MemoSift aggressive | 20.7x | 20.7x + cache | **0.5% of original** |
-| LLMLingua 20x | 20x | 20x + cache | 0.5% + GPU cost |
+| LLMLingua 14x | 14x | 14x + cache | 0.7% + GPU cost |
 | No compression | 1x | 1x + cache | 10% of original |
 
 ---
 
-## 6. Quality Assurance
+## 7. Quality Assurance
 
-### 6.1 Probe Results (348 Probes Across 9 Datasets)
+### 7.1 Probe Results (348 Probes Across 9 Datasets)
 
 | Category | Probes | Pass Rate | Example |
 |:---|:---:|:---:|:---|
@@ -381,7 +455,7 @@ This reduces the N in all compression layers by 15-30% depending on the conversa
 | Domain-specific | 40+ | 92% | "Is HbA1c 7.2% preserved?" |
 | **Overall** | **348** | **96.3%** | — |
 
-### 6.2 Invariants Maintained
+### 7.2 Invariants Maintained
 
 | Invariant | Status | Verified By |
 |:---|:---:|:---|
@@ -393,4 +467,4 @@ This reduces the N in all compression layers by 15-30% depending on the conversa
 
 ---
 
-*Report generated from 225+ synthetic benchmark runs, 11 real-world agent sessions, 348 quality probes, and 395+ unit tests.*
+*Report generated from 225+ synthetic benchmark runs, 72 adaptive benchmark runs, 11 real-world agent sessions, 348 quality probes, and 453+ unit tests.*

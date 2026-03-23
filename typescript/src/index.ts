@@ -1,5 +1,26 @@
 // MemoSift — Framework-agnostic context compaction engine for agentic AI systems.
 
+export {
+  Pressure,
+  MODEL_CONTEXT_WINDOWS,
+  MODEL_OUTPUT_LIMITS,
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_OUTPUT_RESERVE,
+  createContextWindowState,
+  contextWindowFromModel,
+  effectiveCapacity,
+  availableTokens,
+  usageRatio,
+  remainingRatio,
+  pressure,
+  lookupContextWindow,
+  lookupOutputLimit,
+  computeAdaptiveThresholds,
+  resolveContextWindow,
+  estimateTokensHeuristic,
+} from "./core/context-window.js";
+export type { ContextWindowState, AdaptiveOverrides } from "./core/context-window.js";
+
 export { compress, CompressionCache } from "./core/pipeline.js";
 export type { CompressOptions, CompressResult } from "./core/pipeline.js";
 export { partitionZones } from "./core/pipeline.js";

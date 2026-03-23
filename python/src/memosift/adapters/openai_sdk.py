@@ -17,6 +17,7 @@ logger = logging.getLogger("memosift.adapters.openai")
 
 if TYPE_CHECKING:
     from memosift.config import MemoSiftConfig
+    from memosift.core.context_window import ContextWindowState
     from memosift.report import CompressionReport
 
 
@@ -141,6 +142,7 @@ async def compress_openai_messages(
     config: MemoSiftConfig | None = None,
     task: str | None = None,
     ledger: AnchorLedger | None = None,
+    context_window: ContextWindowState | None = None,
 ) -> tuple[list[dict[str, Any]], CompressionReport]:
     """Compress OpenAI-format messages end-to-end.
 
@@ -152,6 +154,7 @@ async def compress_openai_messages(
         config: Pipeline configuration.
         task: Optional task description for relevance scoring.
         ledger: Optional AnchorLedger for fact preservation.
+        context_window: Context window state for adaptive compression.
 
     Returns:
         Tuple of (compressed OpenAI messages, compression report).
@@ -163,5 +166,6 @@ async def compress_openai_messages(
         config=config,
         task=task,
         ledger=ledger,
+        context_window=context_window,
     )
     return adapt_out(compressed), report

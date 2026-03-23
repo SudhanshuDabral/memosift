@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+from typing import TYPE_CHECKING
 
 from memosift.core.types import (
     AnchorCategory,
@@ -13,6 +15,11 @@ from memosift.core.types import (
     DependencyMap,
     MemoSiftMessage,
 )
+
+if TYPE_CHECKING:
+    from memosift.providers.base import MemoSiftLLMProvider
+
+logger = logging.getLogger("memosift")
 
 # File path pattern: matches src/auth.ts, ./config/db.json, C:\Users\file.py, etc.
 FILE_PATH_PATTERN = re.compile(
@@ -594,3 +601,170 @@ def extract_reasoning_chains(
 
         if prior is not None and prior != seg.original_index:
             deps.add_logical(seg.original_index, prior)
+
+
+# ── LLM-Powered Anchor Extraction ───────────────────────────────────────────
+
+_ANCHOR_EXTRACTION_PROMPT = """\
+Extract ALL critical facts from this conversation that must survive compression.
+Return valid JSON with these sections:
+
+{{"files": ["exact/file/path — action (read/modified/created)"],
+ "decisions": ["what was decided and why, verbatim quotes where possible"],
+ "errors": ["error type: message — resolution status"],
+ "identifiers": ["specific IDs, URLs, keys, version numbers"],
+ "conclusions": ["key technical findings, 1 sentence each"],
+ "open_items": ["unresolved questions or pending tasks"]}}
+
+Rules:
+- Include ONLY facts explicitly stated in the conversation text below
+- File paths must be exact (copy from source)
+- Error messages must be verbatim (copy from source)
+- For decisions, include the reasoning
+- Do NOT infer or generate facts not present in the text
+
+CONVERSATION:
+{conversation}"""
+
+_CATEGORY_MAP: dict[str, AnchorCategory] = {
+    "files": AnchorCategory.FILES,
+    "decisions": AnchorCategory.DECISIONS,
+    "errors": AnchorCategory.ERRORS,
+    "identifiers": AnchorCategory.IDENTIFIERS,
+    "conclusions": AnchorCategory.OUTCOMES,
+    "open_items": AnchorCategory.OPEN_ITEMS,
+}
+
+
+async def extract_anchors_llm(
+    segments: list[ClassifiedMessage],
+    ledger: AnchorLedger,
+    llm: MemoSiftLLMProvider,
+) -> None:
+    """Extract anchor facts using an LLM instead of regex.
+
+    Falls back to the regex extractor on any failure.
+    """
+    try:
+        condensed = _build_condensed_view(segments)
+        if not condensed:
+            extract_anchors_from_segments(segments, ledger)
+            return
+
+        prompt = _ANCHOR_EXTRACTION_PROMPT.format(conversation=condensed)
+        response = await llm.generate(prompt, max_tokens=2048, temperature=0.0)
+        full_text = "\n".join(seg.content for seg in segments if seg.content)
+        facts = _parse_anchor_response(response.text, full_text)
+
+        for fact in facts:
+            ledger.add(fact)
+
+        # Positional anchors (INTENT, ACTIVE_CONTEXT) are already extracted
+        # by the regex extractor which runs before this function.
+
+    except Exception as e:
+        logger.warning("LLM anchor extraction failed (%s), falling back to regex.", e)
+        extract_anchors_from_segments(segments, ledger)
+
+
+def _build_condensed_view(segments: list[ClassifiedMessage]) -> str:
+    """Build a condensed conversation view for the LLM prompt."""
+    parts: list[str] = []
+    for seg in segments:
+        if seg.message._memosift_compressed:
+            continue
+        role = seg.message.role.upper()
+        content = seg.content[:500] if seg.content else ""
+        tool_label = f" ({seg.message.name})" if seg.message.name else ""
+        parts.append(f"[{role}{tool_label}]: {content}")
+        if seg.message.tool_calls:
+            for tc in seg.message.tool_calls:
+                parts.append(f"  -> tool_call: {tc.function.name}({tc.function.arguments})")
+    return "\n\n".join(parts)
+
+
+def _parse_anchor_response(response_text: str, full_source_text: str) -> list[AnchorFact]:
+    """Parse LLM JSON response into validated AnchorFact objects."""
+    json_text = response_text.strip()
+    if json_text.startswith("```"):
+        lines = json_text.split("\n")
+        json_text = "\n".join(line for line in lines if not line.strip().startswith("```"))
+
+    try:
+        data = json.loads(json_text)
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+    if not isinstance(data, dict):
+        return []
+
+    source_lower = full_source_text.lower()
+    facts: list[AnchorFact] = []
+
+    for section, category in _CATEGORY_MAP.items():
+        items = data.get(section, [])
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, str) or len(item) < 3:
+                continue
+            if not _validate_fact_against_source(item, category, source_lower):
+                continue
+            facts.append(AnchorFact(category=category, content=item, turn=0, confidence=0.9))
+
+    return facts
+
+
+def _validate_fact_against_source(
+    fact_content: str, category: AnchorCategory, source_text_lower: str,
+) -> bool:
+    """Validate that an LLM-extracted fact is grounded in the source text."""
+    if category == AnchorCategory.FILES:
+        path = fact_content.split(" —")[0].split(" --")[0].strip()
+        return path.lower() in source_text_lower
+    if category == AnchorCategory.ERRORS:
+        error_type = fact_content.split(":")[0].strip()
+        return error_type.lower() in source_text_lower
+    words = fact_content.split()
+    if len(words) >= 3:
+        for i in range(len(words) - 2):
+            chunk = " ".join(words[i : i + 3]).lower()
+            if len(chunk) >= 8 and chunk in source_text_lower:
+                return True
+    for word in words:
+        if len(word) >= 8 and word.lower() in source_text_lower:
+            return True
+    return False
+
+
+def _extract_positional_anchors(segments: list[ClassifiedMessage], ledger: AnchorLedger) -> None:
+    """Extract INTENT and ACTIVE_CONTEXT anchors using positional logic."""
+    first_user = None
+    for seg in segments:
+        if seg.message.role == "user" and not seg.message._memosift_compressed:
+            first_user = seg
+            break
+    if first_user is not None:
+        intent_text = first_user.content.strip()[:300]
+        if intent_text:
+            ledger.add(AnchorFact(category=AnchorCategory.INTENT, content=intent_text, turn=1, confidence=0.9))
+
+    last_user = None
+    last_assistant = None
+    for seg in reversed(segments):
+        if seg.message._memosift_compressed:
+            continue
+        if seg.message.role == "user" and last_user is None:
+            last_user = seg
+        elif seg.message.role == "assistant" and last_assistant is None:
+            last_assistant = seg
+        if last_user is not None and last_assistant is not None:
+            break
+    if last_user is not None:
+        ctx = last_user.content.strip()[:300]
+        if ctx:
+            ledger.add(AnchorFact(category=AnchorCategory.ACTIVE_CONTEXT, content=f"Current task: {ctx}", turn=0, confidence=0.9))
+    if last_assistant is not None:
+        ctx = last_assistant.content.strip()[:300]
+        if ctx:
+            ledger.add(AnchorFact(category=AnchorCategory.ACTIVE_CONTEXT, content=f"Last response: {ctx}", turn=0, confidence=0.8))

@@ -10,11 +10,19 @@ from typing import TYPE_CHECKING
 from memosift.config import MemoSiftConfig
 from memosift.core.anchor_extractor import (
     extract_anchors_from_segments,
+    extract_anchors_llm,
     extract_reasoning_chains,
 )
 from memosift.core.budget import enforce_budget
 from memosift.core.classifier import classify_messages
 from memosift.core.coalescer import coalesce_short_messages
+from memosift.core.context_window import (
+    AdaptiveOverrides,
+    ContextWindowState,
+    compute_adaptive_thresholds,
+    estimate_tokens_heuristic,
+    resolve_context_window,
+)
 from memosift.core.deduplicator import CrossWindowState, deduplicate
 from memosift.core.engines.discourse_compressor import elaborate_compress
 from memosift.core.engines.importance import score_importance
@@ -108,6 +116,7 @@ async def compress(
     ledger: AnchorLedger | None = None,
     cross_window: CrossWindowState | None = None,
     cache: CompressionCache | None = None,
+    context_window: ContextWindowState | None = None,
 ) -> tuple[list[MemoSiftMessage], CompressionReport]:
     """Compress a list of messages through the 6-layer pipeline.
 
@@ -125,6 +134,11 @@ async def compress(
         ledger: Optional AnchorLedger for fact extraction across compression cycles.
             When provided and ``config.enable_anchor_ledger`` is True, critical facts
             are extracted from Zone 3 messages before compression.
+        cross_window: Dedup state for long-running agents (cross-window dedup).
+        cache: Storage for original content of collapsed messages (for re-expansion).
+        context_window: Context window state for adaptive compression (Layer 0).
+            When provided, dynamically adjusts thresholds based on model context
+            window utilization. Overrides ``config.context_window`` if both are set.
 
     Returns:
         A tuple of (compressed_messages, compression_report).
@@ -134,6 +148,49 @@ async def compress(
 
     report = CompressionReport()
     counter: MemoSiftLLMProvider = llm or HeuristicTokenCounter()
+
+    # ── Layer 0: Context-Aware Adaptive Thresholds ──
+    # Resolve context window state from: explicit param > config field > model_name.
+    cw_state = resolve_context_window(
+        context_window or config.context_window,
+        config.model_name,
+        estimate_tokens_heuristic([m.content for m in messages]),
+    )
+    # Ensure current_usage reflects actual message tokens. When the adapter
+    # auto-resolves from model name, current_usage_tokens defaults to 0.
+    # The messages themselves ARE the context — their size IS the usage.
+    if cw_state is not None:
+        _est_msg_tokens = estimate_tokens_heuristic([m.content for m in messages])
+        if _est_msg_tokens > cw_state.current_usage_tokens:
+            cw_state = dataclasses.replace(cw_state, current_usage_tokens=_est_msg_tokens)
+
+    adaptive: AdaptiveOverrides | None = None
+    if cw_state is not None:
+        _user_turn_count = sum(1 for m in messages if m.role == "user")
+        adaptive = compute_adaptive_thresholds(
+            cw_state, config, total_user_turns=_user_turn_count
+        )
+        config = adaptive.effective_config
+        report.add_decision(
+            layer="L0_adaptive",
+            action="computed",
+            message_index=-1,
+            original_tokens=0,
+            result_tokens=0,
+            reason=(
+                f"pressure={adaptive.pressure.value}, "
+                f"model={cw_state.model}, "
+                f"remaining={cw_state.remaining_ratio:.0%}, "
+                f"recent_turns={config.recent_turns}, "
+                f"budget={config.token_budget}"
+            ),
+        )
+
+        # Short-circuit: at NONE pressure, no compression needed.
+        if adaptive.skip_compression:
+            original_tokens = estimate_tokens_heuristic([m.content for m in messages])
+            report.finalize(original_tokens, original_tokens, config.cost_per_1k_tokens)
+            return list(messages), report
 
     # ── Three-Zone Partitioning ──
     zone1, zone2, zone3 = _partition_zones(messages)
@@ -170,8 +227,15 @@ async def compress(
     _fix_original_indices(segments, messages, zone3)
 
     # ── Anchor Extraction (before compression, after classification) ──
+    # Always run regex extraction first (fast, deterministic, captures file
+    # paths, errors, line refs, identifiers).  When an LLM is provided,
+    # ALSO run LLM extraction to catch implicit decisions, conclusions, and
+    # causal relationships that regex misses.  The two are additive — the
+    # ledger deduplicates by content hash.
     if ledger is not None and config.enable_anchor_ledger:
         extract_anchors_from_segments(segments, ledger)
+        if llm is not None:
+            await extract_anchors_llm(segments, ledger, llm)
 
     # ── Reasoning Chain Tracking (after anchor extraction) ──
     # Detect logical dependencies ("therefore", "so we can", etc.) and
@@ -223,24 +287,40 @@ async def compress(
     # Pass ledger to engines so they protect content containing anchor facts.
     # Track content hashes for first-read vs re-read detection (Item 2.2).
     seen_content_hashes: dict[str, int] = {}
-    segments = (
-        await _run_layer(
-            "engine_verbatim",
-            lambda segs: _async_wrap(
-                verbatim_compress(
-                    segs,
-                    config,
-                    ledger=ledger,
-                    seen_content_hashes=seen_content_hashes,
-                )
-            ),
-            segments,
-            report,
-        )
-        or segments
+    # Enable observation masking only for conversations with enough tool results
+    # that old ones are truly stale (>= 10 tool results in the compress bucket).
+    _tool_result_count = sum(
+        1 for s in segments
+        if s.content_type in {ContentType.TOOL_RESULT_TEXT, ContentType.TOOL_RESULT_JSON}
+    )
+    _enable_obs_masking = _tool_result_count >= 10 or (
+        adaptive is not None and adaptive.enable_observation_masking
     )
 
-    if tier != "ultra_fast":
+    # Adaptive engine gating: when Layer 0 is active, only run engines in the gate set.
+    # When adaptive is None, all engines run as before (backward compatible).
+    _gates = adaptive.engine_gates if adaptive is not None else None
+
+    if _gates is None or "verbatim" in _gates:
+        segments = (
+            await _run_layer(
+                "engine_verbatim",
+                lambda segs: _async_wrap(
+                    verbatim_compress(
+                        segs,
+                        config,
+                        ledger=ledger,
+                        seen_content_hashes=seen_content_hashes,
+                        enable_observation_masking=_enable_obs_masking,
+                    )
+                ),
+                segments,
+                report,
+            )
+            or segments
+        )
+
+    if (_gates is None or "pruner" in _gates) and tier != "ultra_fast":
         segments = (
             await _run_layer(
                 "engine_pruner",
@@ -251,15 +331,16 @@ async def compress(
             or segments
         )
 
-    segments = (
-        await _run_layer(
-            "engine_structural",
-            lambda segs: _async_wrap(structural_compress(segs, config, ledger=ledger)),
-            segments,
-            report,
+    if _gates is None or "structural" in _gates:
+        segments = (
+            await _run_layer(
+                "engine_structural",
+                lambda segs: _async_wrap(structural_compress(segs, config, ledger=ledger)),
+                segments,
+                report,
+            )
+            or segments
         )
-        or segments
-    )
 
     # ── Conversation Phase Detection ──
     from memosift.core.phase_detector import PHASE_KEEP_MULTIPLIERS, detect_phase
@@ -268,7 +349,7 @@ async def compress(
     phase_mult = PHASE_KEEP_MULTIPLIERS.get(phase, 1.0)
 
     # ── Layer 3G: Importance Scoring (scoring only, no deletion) ──
-    if tier not in ("fast", "ultra_fast"):
+    if (_gates is None or "importance" in _gates) and tier not in ("fast", "ultra_fast"):
         segments = (
             await _run_layer(
                 "importance_scorer",
@@ -287,7 +368,7 @@ async def compress(
         )
 
     # ── Layer 3E: Query-Relevance Pruning (uses shields from L3G) ──
-    if tier not in ("fast", "ultra_fast"):
+    if (_gates is None or "relevance_pruner" in _gates) and tier not in ("fast", "ultra_fast"):
         segments = (
             await _run_layer(
                 "relevance_pruner",
@@ -299,7 +380,7 @@ async def compress(
         )
 
     # ── Layer 3F: Elaboration Compression (uses shields from L3G) ──
-    if tier != "ultra_fast":
+    if (_gates is None or "discourse" in _gates) and tier != "ultra_fast":
         segments = (
             await _run_layer(
                 "discourse_compressor",
@@ -311,7 +392,8 @@ async def compress(
         )
 
     # Engine D: Summarization (LLM-dependent, opt-in).
-    if config.enable_summarization and llm is not None:
+    _summarizer_gated = _gates is None or "summarizer" in _gates
+    if config.enable_summarization and llm is not None and _summarizer_gated:
         segments = (
             await _run_layer(
                 "engine_summarizer",

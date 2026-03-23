@@ -15,6 +15,7 @@ from memosift.core.types import (
 
 if TYPE_CHECKING:
     from memosift.config import MemoSiftConfig
+    from memosift.core.context_window import ContextWindowState
     from memosift.providers.base import MemoSiftLLMProvider
     from memosift.report import CompressionReport
 
@@ -159,6 +160,7 @@ async def compress_adk_events(
     config: MemoSiftConfig | None = None,
     task: str | None = None,
     ledger: AnchorLedger | None = None,
+    context_window: ContextWindowState | None = None,
 ) -> tuple[list[dict[str, Any]], CompressionReport]:
     """Compress Google ADK events end-to-end."""
     memosift_msgs = adapt_in(events)
@@ -168,6 +170,7 @@ async def compress_adk_events(
         config=config,
         task=task,
         ledger=ledger,
+        context_window=context_window,
     )
     return adapt_out(compressed), report
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from memosift.config import MODEL_BUDGET_DEFAULTS, MODEL_PRICING, MemoSiftConfig
+from memosift.core.context_window import ContextWindowState, Pressure
 from memosift.core.deduplicator import CrossWindowState
 from memosift.core.pipeline import compress
 from memosift.core.types import (
@@ -28,12 +29,14 @@ __all__ = [
     "CrossWindowState",
     "CompressionPolicy",
     "CompressionReport",
+    "ContextWindowState",
     "ContentType",
     "Decision",
     "DependencyMap",
     "MemoSiftConfig",
     "MemoSiftLLMProvider",
     "MemoSiftMessage",
+    "Pressure",
     "MODEL_BUDGET_DEFAULTS",
     "MODEL_PRICING",
     "LLMResponse",

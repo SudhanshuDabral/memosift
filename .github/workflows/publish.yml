@@ -1,0 +1,154 @@
+name: Publish to PyPI & npm
+
+# Triggers when you create a GitHub release (e.g., v0.2.0).
+# The publish steps require manual approval via GitHub Environments.
+on:
+  release:
+    types: [published]
+
+  # Also allow manual trigger from the Actions tab.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build + verify only, no upload)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write  # Required for PyPI trusted publishing
+
+jobs:
+  # ── Step 1: Run all tests ───────────────────────────────────────────────
+  test:
+    name: Test before publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python deps
+        run: cd python && pip install -e ".[dev]"
+
+      - name: Install TypeScript deps
+        run: cd typescript && npm ci
+
+      - name: Python tests
+        run: python -m pytest tests/python/ -x -q
+
+      - name: TypeScript tests
+        run: cd typescript && npm test
+
+      - name: Python lint
+        run: cd python && ruff check src/
+
+      - name: TypeScript type check
+        run: cd typescript && npx tsc --noEmit
+
+  # ── Step 2: Build packages ─────────────────────────────────────────────
+  build:
+    name: Build packages
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build Python package
+        run: |
+          pip install build twine
+          cd python && python -m build
+          twine check dist/*
+
+      - name: Build TypeScript package
+        run: |
+          cd typescript && npm ci && npm run build
+          npm pack --dry-run
+
+      - name: Verify version consistency
+        run: |
+          PY_VER=$(python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml','rb'))['project']['version'])")
+          TS_VER=$(node -e "console.log(require('./typescript/package.json').version)")
+          echo "Python: $PY_VER | TypeScript: $TS_VER"
+          if [ "$PY_VER" != "$TS_VER" ]; then
+            echo "::error::Version mismatch! Python=$PY_VER, TypeScript=$TS_VER"
+            exit 1
+          fi
+
+      - name: Upload Python artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: python/dist/
+
+      - name: Upload TypeScript artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-dist
+          path: typescript/
+
+  # ── Step 3: Publish Python to PyPI (requires approval) ─────────────────
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi  # ← Requires your approval in GitHub UI
+    if: ${{ !inputs.dry_run }}
+    steps:
+      - name: Download Python artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # Uses trusted publishing (OIDC) — no token needed if configured.
+          # Fallback: set PYPI_API_TOKEN secret in the 'pypi' environment.
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  # ── Step 4: Publish TypeScript to npm (requires approval) ──────────────
+  publish-npm:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm  # ← Requires your approval in GitHub UI
+    if: ${{ !inputs.dry_run }}
+    steps:
+      - name: Download TypeScript artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: typescript-dist
+          path: typescript/
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm
+        working-directory: typescript
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

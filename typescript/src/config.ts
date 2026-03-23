@@ -1,5 +1,6 @@
 // Pipeline configuration with sensible defaults and domain presets.
 
+import type { ContextWindowState } from "./core/context-window.js";
 import { CompressionPolicy, ContentType } from "./core/types.js";
 
 export const MODEL_BUDGET_DEFAULTS: Record<string, number> = {
@@ -44,6 +45,7 @@ export interface MemoSiftConfig {
   deterministicSeed: number | null;
   performanceTier: string | null;
   preBucketBypass: boolean;
+  contextWindow: ContextWindowState | null;
 }
 
 const PRESETS: Record<string, Partial<MemoSiftConfig>> = {
@@ -128,6 +130,7 @@ export function createConfig(overrides?: Partial<MemoSiftConfig>): MemoSiftConfi
     deterministicSeed: 42,
     performanceTier: null,
     preBucketBypass: true,
+    contextWindow: null,
     ...overrides,
   };
   validateConfig(config);

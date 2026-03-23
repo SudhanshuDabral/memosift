@@ -1,8 +1,8 @@
 # MemoSift
 
-**Your AI agent dies at 128K tokens. MemoSift keeps it alive.**
+**Your AI agent dies at 150K tokens. MemoSift keeps it alive.**
 
-Deterministic context compression engine that sits between your agent and the LLM. Zero LLM calls, sub-2s latency, 97% fact retention. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, and LangChain.
+Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed — never over-compresses when there's room, aggressively compresses when the window is full. Zero LLM calls by default, sub-2s latency, 100% fidelity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, and LangChain.
 
 ## Install
 
@@ -170,6 +170,62 @@ import { compressLangChainMessages } from "memosift";
 
 const { messages: compressed, report } = await compressLangChainMessages(messages);
 ```
+
+## Adaptive Compression (Layer 0)
+
+MemoSift v0.2 introduces **context-aware adaptive compression** — the system reads the model's context window size, estimates current utilization, and dynamically adjusts every compression parameter. No more fixed thresholds that don't know whether you're running GPT-4o (128K) or Claude Opus 4.6 (1M).
+
+```python
+# Python — automatic: just tell MemoSift which model you're using
+from memosift import compress, ContextWindowState
+
+# Option 1: Pass model name — MemoSift looks up the context window
+compressed, report = await compress(
+    messages,
+    context_window=ContextWindowState.from_model("claude-haiku-4-5", current_usage_tokens=150_000),
+)
+# Haiku 4.5 has 200K window → 150K used → 75% consumed → HIGH pressure → aggressive compression
+
+# Option 2: Adapters auto-detect from the model parameter
+from memosift.adapters.anthropic_sdk import compress_anthropic_messages
+
+compressed, report = await compress_anthropic_messages(
+    messages,
+    model="claude-haiku-4-5",  # Auto-resolves context window
+)
+```
+
+```typescript
+// TypeScript
+import { compress, contextWindowFromModel } from "memosift";
+
+const cw = contextWindowFromModel("claude-haiku-4-5", 150_000);
+const { messages: compressed, report } = await compress(messages, { contextWindow: cw });
+```
+
+### How It Works
+
+| Pressure | Context Remaining | What MemoSift Does |
+|----------|:-----------------:|:-------------------|
+| **NONE** | >60% | Skips compression entirely — zero overhead |
+| **LOW** | 40–60% | Light: dedup + verbatim noise removal only |
+| **MEDIUM** | 25–40% | Standard: adds pruning, structural, discourse |
+| **HIGH** | 10–25% | Aggressive: all engines, observation masking, force full tier |
+| **CRITICAL** | <10% | Maximum: auto-enables Engine D (LLM summarization) if available |
+
+When an agent switches models mid-session (e.g., from a 1M-token model to a 200K-token model), MemoSift automatically recalibrates — no config changes needed.
+
+### Benchmarks
+
+| Pressure | Compression | Fidelity | Fact Retention | Tool Integrity |
+|:---------|:-----------:|:--------:|:--------------:|:--------------:|
+| NONE | 1.0x | 100% | 87.9% | ALL PASS |
+| LOW | 1.85x | 100% | 91.3% | ALL PASS |
+| MEDIUM | 2.58x | 100% | 83.5% | ALL PASS |
+| HIGH | 3.17x | 100% | 79.9% | ALL PASS |
+| **CRITICAL + LLM** | **4.40x** | **100%** | **79.9%** | **ALL PASS** |
+
+Production sessions (11 real Claude sessions, 5.5M tokens): **5.09x compression, 90.5% fact retention, 100% tool integrity.**
 
 ## Configuration
 
@@ -419,6 +475,7 @@ MemoSift compresses through a 6-layer pipeline with 7 compression engines:
 
 ```
 Messages In
+  → L0: Adaptive    — Read model context window, compute pressure, tune thresholds
   → L1: Classify    — Assign content types (system, code, error, tool result, etc.)
   → L2: Dedup       — SHA-256 exact + MinHash/TF-IDF fuzzy deduplication
   → L2.5: Coalesce  — Merge consecutive short assistant messages
@@ -438,12 +495,15 @@ Messages Out + CompressionReport
 
 ### Key Properties
 
+- **Context-aware** — reads the model's context window, compresses only when needed
 - **Zero runtime dependencies** in core — no ML models, no torch, no transformers
 - **Lossless by default** — only dedup and verbatim deletion unless you opt in to summarization
 - **Framework-agnostic** — core operates on `MemoSiftMessage[]`, adapters handle conversion
 - **Tool call integrity** — if a `tool_call` survives, all matching `tool_result` messages survive too
 - **Deterministic** — same input + same config = same output (seeded with `deterministic_seed=42`)
 - **Fault-tolerant** — any layer that throws is skipped, pipeline never crashes
+- **Zero overhead** — skips compression entirely when the context window has room (NONE pressure)
+- **Model-switching safe** — recalibrates automatically when the agent switches models mid-session
 - **Sub-100ms** for deterministic layers on 100K tokens
 
 ## LLM Provider (Optional)
@@ -507,10 +567,10 @@ This ensures file paths, error messages, and decisions survive Claude Code's con
 ```bash
 # Python
 cd python && pip install -e ".[dev]"
-cd .. && python -m pytest tests/python/ -x -q   # 395 tests
+cd .. && python -m pytest tests/python/ -x -q   # 453 tests
 
 # TypeScript
-cd typescript && npm install && npm test          # 39 tests
+cd typescript && npm install && npm test          # 78 tests
 
 # Lint & format
 cd python && ruff format src/ && ruff check src/

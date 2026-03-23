@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from memosift.core.context_window import ContextWindowState
 from memosift.core.pipeline import compress
 from memosift.core.types import (
     AnchorLedger,
@@ -325,6 +326,7 @@ async def compress_agent_sdk_messages(
     ledger: AnchorLedger | None = None,
     client: Any = None,
     model: str = "claude-sonnet-4-6",
+    context_window: ContextWindowState | None = None,
 ) -> tuple[list[dict[str, Any]], CompressionReport]:
     """Compress Claude Agent SDK session messages end-to-end.
 
@@ -339,6 +341,8 @@ async def compress_agent_sdk_messages(
         ledger: Optional AnchorLedger.
         client: Claude Agent SDK client for auto-wrapping.
         model: Model name for auto-wrapping.
+        context_window: Context window state for adaptive compression.
+            When None, auto-resolves from ``model`` using the model registry.
 
     Returns:
         Tuple of (compressed Anthropic-format messages, compression report).
@@ -347,6 +351,11 @@ async def compress_agent_sdk_messages(
     if provider is None and client is not None:
         provider = ClaudeAgentLLMProvider(client, model)
 
+    # Auto-resolve context window from model name if not explicitly provided.
+    cw = context_window
+    if cw is None and model:
+        cw = ContextWindowState.from_model(model)
+
     memosift_msgs = adapt_in(messages)
     compressed, report = await compress(
         memosift_msgs,
@@ -354,6 +363,7 @@ async def compress_agent_sdk_messages(
         config=config,
         task=task,
         ledger=ledger,
+        context_window=cw,
     )
     return adapt_out(compressed), report
 
