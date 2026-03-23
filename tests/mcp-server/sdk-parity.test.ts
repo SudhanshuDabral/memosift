@@ -5,20 +5,18 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createMemoSiftServer } from "../../mcp-server/src/server.js";
 import type { SessionManager } from "../../mcp-server/src/session-manager.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { compressOpenAIMessages, compressAnthropicMessages } from "memosift";
 
 let client: Client;
 let sessionManager: SessionManager;
 
+const FIXTURES_DIR = resolve(__dirname, "../../benchmarks/sdk_integration/fixtures");
+const FIXTURES_AVAILABLE = existsSync(resolve(FIXTURES_DIR, "openai/coding_with_tools.json"));
+
 function loadFixture(sdk: string, name: string): Record<string, unknown> {
-  const path = resolve(
-    __dirname,
-    "../../benchmarks/sdk_integration/fixtures",
-    sdk,
-    `${name}.json`,
-  );
+  const path = resolve(FIXTURES_DIR, sdk, `${name}.json`);
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
@@ -41,7 +39,7 @@ afterAll(() => sessionManager.dispose());
 
 // ── OpenAI Fixtures ──────────────────────────────────────────────────────────
 
-describe("OpenAI SDK parity", () => {
+describe.skipIf(!FIXTURES_AVAILABLE)("OpenAI SDK parity", () => {
   const scenarios = ["coding_with_tools", "long_reasoning", "research_with_search"];
 
   for (const scenario of scenarios) {
@@ -81,7 +79,7 @@ describe("OpenAI SDK parity", () => {
 
 // ── Anthropic Fixtures ───────────────────────────────────────────────────────
 
-describe("Anthropic SDK parity", () => {
+describe.skipIf(!FIXTURES_AVAILABLE)("Anthropic SDK parity", () => {
   const scenarios = ["coding_with_tools", "extended_thinking", "long_multi_turn"];
 
   for (const scenario of scenarios) {
