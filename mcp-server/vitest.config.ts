@@ -4,9 +4,10 @@ import { resolve } from "node:path";
 export default defineConfig({
   resolve: {
     alias: {
-      // Resolve memosift to the built dist/ (file: link points to ../typescript).
-      // This ensures vitest can resolve the package even when running in CI.
-      memosift: resolve(__dirname, "../typescript/dist/index.js"),
+      // Resolve memosift to the TypeScript source so vitest can process it
+      // without requiring a built dist/. The file: link in package.json
+      // points to ../typescript but vitest needs the source for transforms.
+      memosift: resolve(__dirname, "../typescript/src/index.ts"),
     },
   },
   test: {
