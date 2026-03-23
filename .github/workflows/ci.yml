@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python-test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install pytest-cov
+          cd python && pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          cd python && ruff check src/
+
+      - name: Format check
+        run: |
+          cd python && ruff format --check src/
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/python/ -x -q -m "not slow and not llm"
+
+      - name: Run tests with coverage
+        run: |
+          python -m pytest tests/python/ --cov=memosift --cov-report=term-missing -m "not slow and not llm"
+
+  python-full-test:
+    name: Python full test suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          cd python && pip install -e ".[dev]"
+
+      - name: Run all tests
+        run: |
+          python -m pytest tests/python/ -x -q
+
+  typescript-test:
+    name: TypeScript
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          cd typescript && npm ci
+
+      - name: Type check
+        run: |
+          cd typescript && npx tsc --noEmit
+
+      - name: Lint
+        run: |
+          cd typescript && npx biome check --config-path ../biome.json ../typescript/src/
+
+      - name: Format check
+        run: |
+          cd typescript && npx biome format --config-path ../biome.json ../typescript/src/
+
+      - name: Run tests
+        run: |
+          cd typescript && npm test
+
+  cross-language-vectors:
+    name: Validate test vectors
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          cd python && pip install -e ".[dev]"
+
+      - name: Validate cross-language vectors
+        run: |
+          python spec/validate_vectors.py

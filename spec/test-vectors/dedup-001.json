@@ -1,0 +1,14 @@
+{
+  "description": "Same file read twice — second should be deduplicated",
+  "input": [
+    { "role": "system", "content": "You are a coding assistant." },
+    { "role": "tool", "content": "export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}", "tool_call_id": "tc1", "name": "read_file" },
+    { "role": "assistant", "content": "I see the math utility file." },
+    { "role": "tool", "content": "export function add(a: number, b: number): number {\n  return a + b;\n}\n\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}", "tool_call_id": "tc2", "name": "read_file" }
+  ],
+  "expected": {
+    "deduplicated_indices": [3],
+    "original_index_for_3": 1,
+    "message_3_content_contains": "read earlier in this session"
+  }
+}

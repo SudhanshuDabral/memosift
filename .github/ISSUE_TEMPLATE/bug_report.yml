@@ -1,0 +1,89 @@
+name: Bug Report
+description: Report a bug in MemoSift
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out the information below.
+
+  - type: input
+    id: version
+    attributes:
+      label: MemoSift version
+      description: Output of `pip show memosift` or `npm list memosift`
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options:
+        - Python
+        - TypeScript
+        - Both
+    validations:
+      required: true
+
+  - type: input
+    id: runtime-version
+    attributes:
+      label: Runtime version
+      description: Output of `python --version` or `node --version`
+      placeholder: "Python 3.13.1"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04 / macOS 15 / Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Smallest code snippet that reproduces the issue.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: MemoSift configuration
+      description: The MemoSiftConfig you're using (if relevant).
+      render: python
+
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Framework adapter
+      description: Which adapter are you using?
+      options:
+        - None (core API)
+        - OpenAI SDK
+        - Anthropic SDK
+        - Claude Agent SDK
+        - Google ADK
+        - LangChain
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / logs
+      description: Paste any error messages or stack traces.
+      render: shell

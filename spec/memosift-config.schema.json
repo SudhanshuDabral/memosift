@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memosift.dev/schemas/memosift-config.json",
+  "title": "MemoSiftConfig",
+  "type": "object",
+  "properties": {
+    "recent_turns": {
+      "type": "integer", "default": 3, "minimum": 0,
+      "description": "Number of recent conversational turns to protect from compression."
+    },
+    "token_budget": {
+      "type": ["integer", "null"], "default": null, "minimum": 1000,
+      "description": "Maximum output tokens. Null = no limit."
+    },
+    "enable_summarization": {
+      "type": "boolean", "default": false,
+      "description": "Enable Engine D (abstractive summarization). Requires an LLM provider."
+    },
+    "llm_relevance_scoring": {
+      "type": "boolean", "default": false,
+      "description": "Use LLM for relevance scoring in Layer 4. Requires an LLM provider."
+    },
+    "reorder_segments": {
+      "type": "boolean", "default": false,
+      "description": "Enable position optimization (Layer 5). CAUTION: can break API constraints."
+    },
+    "dedup_similarity_threshold": {
+      "type": "number", "default": 0.85, "minimum": 0.0, "maximum": 1.0,
+      "description": "Cosine similarity threshold for fuzzy deduplication."
+    },
+    "entropy_threshold": {
+      "type": "number", "default": 2.0, "minimum": 0.0,
+      "description": "Minimum Shannon entropy (bits/char) to keep a line in verbatim deletion."
+    },
+    "token_prune_keep_ratio": {
+      "type": "number", "default": 0.6, "minimum": 0.1, "maximum": 1.0,
+      "description": "Fraction of tokens to retain in IDF-based pruning."
+    },
+    "json_array_threshold": {
+      "type": "integer", "default": 5, "minimum": 1,
+      "description": "Max items in a JSON array before truncation."
+    },
+    "code_keep_signatures": {
+      "type": "boolean", "default": true,
+      "description": "Keep function/class signatures in code compression."
+    },
+    "relevance_drop_threshold": {
+      "type": "number", "default": 0.05, "minimum": 0.0, "maximum": 1.0,
+      "description": "Minimum keyword overlap ratio to survive relevance scoring."
+    },
+    "policies": {
+      "type": "object", "default": {},
+      "description": "Per-content-type policy overrides. Keys are ContentType values, values are CompressionPolicy values."
+    }
+  },
+  "additionalProperties": false
+}

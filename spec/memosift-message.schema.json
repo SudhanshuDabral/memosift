@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memosift.dev/schemas/memosift-message.json",
+  "title": "MemoSiftMessage",
+  "description": "The universal message representation used by MemoSift's compression pipeline.",
+  "type": "object",
+  "required": ["role", "content"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": ["system", "user", "assistant", "tool"],
+      "description": "The message role, matching the OpenAI/Anthropic convention."
+    },
+    "content": {
+      "type": "string",
+      "description": "The text content of the message."
+    },
+    "name": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Tool name (for tool messages) or participant name."
+    },
+    "tool_call_id": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Links a tool result back to the assistant's tool_call that triggered it."
+    },
+    "tool_calls": {
+      "type": ["array", "null"],
+      "default": null,
+      "description": "For assistant messages that invoke tools. Each item has id, function.name, function.arguments.",
+      "items": {
+        "type": "object",
+        "required": ["id", "function"],
+        "properties": {
+          "id": { "type": "string" },
+          "function": {
+            "type": "object",
+            "required": ["name", "arguments"],
+            "properties": {
+              "name": { "type": "string" },
+              "arguments": { "type": "string" }
+            }
+          },
+          "type": { "type": "string", "const": "function" }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "default": {},
+      "description": "Framework-specific data preserved through compression. Keys and values are opaque to MemoSift."
+    }
+  },
+  "additionalProperties": false
+}

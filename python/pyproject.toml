@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "memosift"
+version = "0.1.0"
+description = "Context compression engine for AI agents — deterministic, framework-agnostic middleware"
+readme = "../README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+keywords = [
+    "llm",
+    "context",
+    "compression",
+    "agents",
+    "langchain",
+    "openai",
+    "anthropic",
+    "google-adk",
+    "context-window",
+    "token-management",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+authors = [{ name = "MemoSift", email = "hello@memosift.dev" }]
+
+# ZERO runtime dependencies for core — framework-agnostic
+dependencies = []
+
+[project.optional-dependencies]
+scikit = ["scikit-learn>=1.5"]
+tiktoken = ["tiktoken>=0.8"]
+langchain = ["langchain-core>=0.3"]
+openai = ["openai>=1.50"]
+anthropic = ["anthropic>=0.40"]
+google-adk = ["google-adk>=1.16"]
+all = ["memosift[scikit,tiktoken,langchain,openai,anthropic,google-adk]"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.100",
+    "ruff>=0.8",
+    "coverage>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/memosift/memosift"
+Documentation = "https://memosift.dev/docs"
+Repository = "https://github.com/memosift/memosift"
+Issues = "https://github.com/memosift/memosift/issues"
+Changelog = "https://github.com/memosift/memosift/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/memosift/"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memosift"]
+
+[tool.pytest.ini_options]
+testpaths = ["../../tests/python"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "llm: marks tests that require LLM provider",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["memosift"]
+
+[tool.coverage.run]
+source = ["memosift"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

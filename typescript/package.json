@@ -1,0 +1,84 @@
+{
+  "name": "memosift",
+  "version": "0.1.0",
+  "description": "Context compression engine for AI agents — deterministic, framework-agnostic middleware",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --config ./vitest.config.ts",
+    "test:watch": "vitest --config ./vitest.config.ts",
+    "lint": "biome check src/",
+    "format": "biome format --write src/",
+    "prepublishOnly": "npm run build"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./adapters/openai-sdk": {
+      "import": "./dist/adapters/openai-sdk.js",
+      "types": "./dist/adapters/openai-sdk.d.ts"
+    },
+    "./adapters/anthropic-sdk": {
+      "import": "./dist/adapters/anthropic-sdk.js",
+      "types": "./dist/adapters/anthropic-sdk.d.ts"
+    },
+    "./adapters/langchain": {
+      "import": "./dist/adapters/langchain.js",
+      "types": "./dist/adapters/langchain.d.ts"
+    },
+    "./adapters/google-adk": {
+      "import": "./dist/adapters/google-adk.js",
+      "types": "./dist/adapters/google-adk.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "llm",
+    "context",
+    "compression",
+    "agents",
+    "langchain",
+    "openai",
+    "anthropic",
+    "google-adk",
+    "context-window",
+    "token-management"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/memosift/memosift"
+  },
+  "homepage": "https://memosift.dev",
+  "bugs": {
+    "url": "https://github.com/memosift/memosift/issues"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.0.0",
+    "fast-check": "^3.22.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0",
+    "@langchain/core": ">=0.3.0",
+    "openai": ">=4.60.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": { "optional": true },
+    "@langchain/core": { "optional": true },
+    "openai": { "optional": true }
+  }
+}
