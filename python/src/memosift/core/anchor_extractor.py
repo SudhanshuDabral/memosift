@@ -731,10 +731,7 @@ def _validate_fact_against_source(
             chunk = " ".join(words[i : i + 3]).lower()
             if len(chunk) >= 8 and chunk in source_text_lower:
                 return True
-    for word in words:
-        if len(word) >= 8 and word.lower() in source_text_lower:
-            return True
-    return False
+    return any(len(word) >= 8 and word.lower() in source_text_lower for word in words)
 
 
 def _extract_positional_anchors(segments: list[ClassifiedMessage], ledger: AnchorLedger) -> None:
@@ -747,7 +744,9 @@ def _extract_positional_anchors(segments: list[ClassifiedMessage], ledger: Ancho
     if first_user is not None:
         intent_text = first_user.content.strip()[:300]
         if intent_text:
-            ledger.add(AnchorFact(category=AnchorCategory.INTENT, content=intent_text, turn=1, confidence=0.9))
+            ledger.add(AnchorFact(
+                category=AnchorCategory.INTENT, content=intent_text, turn=1, confidence=0.9,
+            ))
 
     last_user = None
     last_assistant = None
@@ -763,8 +762,14 @@ def _extract_positional_anchors(segments: list[ClassifiedMessage], ledger: Ancho
     if last_user is not None:
         ctx = last_user.content.strip()[:300]
         if ctx:
-            ledger.add(AnchorFact(category=AnchorCategory.ACTIVE_CONTEXT, content=f"Current task: {ctx}", turn=0, confidence=0.9))
+            ledger.add(AnchorFact(
+                category=AnchorCategory.ACTIVE_CONTEXT,
+                content=f"Current task: {ctx}", turn=0, confidence=0.9,
+            ))
     if last_assistant is not None:
         ctx = last_assistant.content.strip()[:300]
         if ctx:
-            ledger.add(AnchorFact(category=AnchorCategory.ACTIVE_CONTEXT, content=f"Last response: {ctx}", turn=0, confidence=0.8))
+            ledger.add(AnchorFact(
+                category=AnchorCategory.ACTIVE_CONTEXT,
+                content=f"Last response: {ctx}", turn=0, confidence=0.8,
+            ))

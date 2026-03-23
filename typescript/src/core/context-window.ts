@@ -272,7 +272,8 @@ export function computeAdaptiveThresholds(
 
   // Recent turn protection (percentage-based).
   const ratio = RECENT_TURN_RATIOS[p];
-  let adaptiveRecent = totalUserTurns > 0 ? Math.max(1, Math.round(totalUserTurns * ratio)) : config.recentTurns;
+  const adaptiveRecent =
+    totalUserTurns > 0 ? Math.max(1, Math.round(totalUserTurns * ratio)) : config.recentTurns;
   const effectiveRecent = Math.min(adaptiveRecent, config.recentTurns);
 
   // Auto-budget from available capacity.
@@ -295,8 +296,7 @@ export function computeAdaptiveThresholds(
     p === Pressure.HIGH || p === Pressure.CRITICAL ? "full" : config.performanceTier;
 
   // Auto-enable summarization at CRITICAL pressure.
-  const effectiveSummarization =
-    p === Pressure.CRITICAL ? true : config.enableSummarization;
+  const effectiveSummarization = p === Pressure.CRITICAL ? true : config.enableSummarization;
 
   const effectiveConfig: MemoSiftConfig = {
     ...config,

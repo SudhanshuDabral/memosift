@@ -376,7 +376,7 @@ def _mask_old_observation(
     elif len(lines) <= 3:
         summary = seg.content[:200]
     else:
-        first_two = " | ".join(l.strip() for l in lines[:2] if l.strip())
+        first_two = " | ".join(ln.strip() for ln in lines[:2] if ln.strip())
         last = lines[-1].strip() or (lines[-2].strip() if len(lines) > 1 else "")
         summary = f"{first_two} ... {last}"[:200]
 
