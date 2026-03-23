@@ -716,7 +716,9 @@ def _parse_anchor_response(response_text: str, full_source_text: str) -> list[An
 
 
 def _validate_fact_against_source(
-    fact_content: str, category: AnchorCategory, source_text_lower: str,
+    fact_content: str,
+    category: AnchorCategory,
+    source_text_lower: str,
 ) -> bool:
     """Validate that an LLM-extracted fact is grounded in the source text."""
     if category == AnchorCategory.FILES:
@@ -744,9 +746,14 @@ def _extract_positional_anchors(segments: list[ClassifiedMessage], ledger: Ancho
     if first_user is not None:
         intent_text = first_user.content.strip()[:300]
         if intent_text:
-            ledger.add(AnchorFact(
-                category=AnchorCategory.INTENT, content=intent_text, turn=1, confidence=0.9,
-            ))
+            ledger.add(
+                AnchorFact(
+                    category=AnchorCategory.INTENT,
+                    content=intent_text,
+                    turn=1,
+                    confidence=0.9,
+                )
+            )
 
     last_user = None
     last_assistant = None
@@ -762,14 +769,22 @@ def _extract_positional_anchors(segments: list[ClassifiedMessage], ledger: Ancho
     if last_user is not None:
         ctx = last_user.content.strip()[:300]
         if ctx:
-            ledger.add(AnchorFact(
-                category=AnchorCategory.ACTIVE_CONTEXT,
-                content=f"Current task: {ctx}", turn=0, confidence=0.9,
-            ))
+            ledger.add(
+                AnchorFact(
+                    category=AnchorCategory.ACTIVE_CONTEXT,
+                    content=f"Current task: {ctx}",
+                    turn=0,
+                    confidence=0.9,
+                )
+            )
     if last_assistant is not None:
         ctx = last_assistant.content.strip()[:300]
         if ctx:
-            ledger.add(AnchorFact(
-                category=AnchorCategory.ACTIVE_CONTEXT,
-                content=f"Last response: {ctx}", turn=0, confidence=0.8,
-            ))
+            ledger.add(
+                AnchorFact(
+                    category=AnchorCategory.ACTIVE_CONTEXT,
+                    content=f"Last response: {ctx}",
+                    turn=0,
+                    confidence=0.8,
+                )
+            )

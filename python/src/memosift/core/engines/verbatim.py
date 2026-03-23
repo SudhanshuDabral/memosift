@@ -124,8 +124,7 @@ def verbatim_compress(
             and not seg.protected
             and seg.content
             and len(seg.content) >= 500
-            and seg.content_type
-            in {ContentType.TOOL_RESULT_TEXT, ContentType.TOOL_RESULT_JSON}
+            and seg.content_type in {ContentType.TOOL_RESULT_TEXT, ContentType.TOOL_RESULT_JSON}
         ):
             placeholder = _mask_old_observation(seg, ledger=ledger)
             if placeholder is not None:

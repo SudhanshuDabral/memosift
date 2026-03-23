@@ -167,9 +167,7 @@ async def compress(
     adaptive: AdaptiveOverrides | None = None
     if cw_state is not None:
         _user_turn_count = sum(1 for m in messages if m.role == "user")
-        adaptive = compute_adaptive_thresholds(
-            cw_state, config, total_user_turns=_user_turn_count
-        )
+        adaptive = compute_adaptive_thresholds(cw_state, config, total_user_turns=_user_turn_count)
         config = adaptive.effective_config
         report.add_decision(
             layer="L0_adaptive",
@@ -290,7 +288,8 @@ async def compress(
     # Enable observation masking only for conversations with enough tool results
     # that old ones are truly stale (>= 10 tool results in the compress bucket).
     _tool_result_count = sum(
-        1 for s in segments
+        1
+        for s in segments
         if s.content_type in {ContentType.TOOL_RESULT_TEXT, ContentType.TOOL_RESULT_JSON}
     )
     _enable_obs_masking = _tool_result_count >= 10 or (
