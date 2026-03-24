@@ -2,7 +2,7 @@
 
 **Your AI agent dies at 150K tokens. MemoSift keeps it alive.**
 
-Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed — never over-compresses when there's room, aggressively compresses when the window is full. Zero LLM calls by default, sub-200ms latency, 100% tool call integrity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, LangChain, and Vercel AI SDK.
+Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed — never over-compresses when there's room, aggressively compresses when the window is full. Zero LLM calls by default, sub-200ms latency, 100% tool call integrity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, LangChain, and Vercel AI SDK. Stateful sessions, real-time streaming, and an MCP server for zero-code integration.
 
 ### Verified on Real Production Data
 
@@ -18,6 +18,28 @@ Context-aware compression engine that sits between your agent and the LLM. Reads
 | **Tests** | 547 Python + 160 TypeScript, all passing |
 
 See [ACHIEVEMENTS.md](ACHIEVEMENTS.md) for full benchmark details and per-session breakdowns.
+
+## MCP Server
+
+Use MemoSift from any MCP-compatible client (Claude Desktop, Claude Code, Cursor, Windsurf) — no code required:
+
+```bash
+npx @memosift/mcp-server
+```
+
+```json
+// ~/.claude/settings.json or claude_desktop_config.json
+{
+  "mcpServers": {
+    "memosift": {
+      "command": "npx",
+      "args": ["@memosift/mcp-server"]
+    }
+  }
+}
+```
+
+8 tools: `memosift_check_pressure`, `memosift_compress`, `memosift_configure`, `memosift_get_facts`, `memosift_expand`, `memosift_report`, `memosift_list_sessions`, `memosift_destroy`.
 
 ## Install
 
@@ -36,6 +58,9 @@ pip install memosift[all]
 ```bash
 # TypeScript / Node.js (>= 22)
 npm install memosift
+
+# MCP Server (zero-code, works with Claude Desktop/Code/Cursor/Windsurf)
+npx @memosift/mcp-server
 ```
 
 ## Quick Start
@@ -79,6 +104,90 @@ const { messages: compressed, report } = await compress(messages);
 
 console.log(`${report.compressionRatio.toFixed(1)}x compression`);
 console.log(`${report.originalTokens} → ${report.compressedTokens} tokens`);
+```
+
+## Stateful Sessions (Recommended)
+
+`MemoSiftSession` is the recommended entry point — it owns the anchor ledger, dedup state, and compression cache internally, collapsing the raw API from 7 objects into a single constructor + `compress()` call.
+
+```python
+# Python
+from memosift import MemoSiftSession
+
+session = MemoSiftSession("coding", model="claude-sonnet-4-6")
+
+# Compress framework-native messages (auto-detected format)
+compressed, report = await session.compress(messages, usage_tokens=150_000)
+
+# Facts survive across compression cycles
+for fact in session.facts:
+    print(f"[{fact.category.value}] {fact.content}")
+
+# Re-expand a collapsed message
+original = session.expand(original_index=5)
+
+# Save/restore session state across restarts
+session.save_state("session.json")
+restored = MemoSiftSession.load_state("session.json")
+```
+
+```typescript
+// TypeScript
+import { MemoSiftSession } from "memosift";
+
+const session = new MemoSiftSession({ preset: "coding", model: "claude-sonnet-4-6" });
+
+const { messages: compressed, report } = await session.compress(messages, { usageTokens: 150_000 });
+```
+
+## Real-Time Streaming
+
+`MemoSiftStream` processes messages as they arrive, buffering until context pressure warrants compression:
+
+```python
+# Python
+from memosift import MemoSiftStream
+
+stream = MemoSiftStream("coding", model="claude-sonnet-4-6")
+
+for message in incoming_messages:
+    event = await stream.push(message)
+    if event.compressed:
+        print(f"Saved {event.tokens_saved} tokens at {event.pressure} pressure")
+
+# Force compression at end of conversation
+await stream.flush()
+compressed = stream.messages
+```
+
+```typescript
+// TypeScript
+import { MemoSiftStream } from "memosift";
+
+const stream = new MemoSiftStream({ preset: "coding", model: "claude-sonnet-4-6" });
+
+for (const msg of incomingMessages) {
+  const event = await stream.push(msg);
+  if (event.compressed) console.log(`Saved ${event.tokensSaved} tokens`);
+}
+```
+
+## Incremental Compression
+
+`CompressionState` caches IDF vocabulary, classification results, and token counts across `compress()` calls for faster subsequent compressions:
+
+```python
+# Python — via session
+session = MemoSiftSession("coding", model="claude-sonnet-4-6", incremental=True)
+
+# Each compress() call reuses cached state from previous calls
+compressed_1, _ = await session.compress(window_1, usage_tokens=100_000)
+compressed_2, _ = await session.compress(window_2, usage_tokens=150_000)  # Faster
+```
+
+```typescript
+// TypeScript — via session
+const session = new MemoSiftSession({ preset: "coding", model: "claude-sonnet-4-6", incremental: true });
 ```
 
 ## Framework Adapters

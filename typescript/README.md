@@ -1,8 +1,8 @@
 # MemoSift
 
-**Your AI agent dies at 128K tokens. MemoSift keeps it alive.**
+**Your AI agent dies at 150K tokens. MemoSift keeps it alive.**
 
-Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed. Zero LLM calls by default, sub-2s latency, 100% fidelity, 100% tool call integrity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, and LangChain.
+Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed. Zero LLM calls by default, sub-200ms latency, 100% fidelity, 100% tool call integrity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, LangChain, and Vercel AI SDK. Stateful sessions, real-time streaming, and an MCP server for zero-code integration.
 
 ## Why MemoSift
 
@@ -11,11 +11,11 @@ Context-aware compression engine that sits between your agent and the LLM. Reads
 | **Context-aware** | Reads model window, adapts automatically | No | No | No |
 | **Compression** | 5.1x (production avg) | ~86-93% removed | ~58.6% savings | 2-14x |
 | **Quality** | 4.17/5.0 functional, 100% fidelity | 3.35/5.0 | 3.44/5.0 | 88-100% |
-| **Tool integrity** | 100% across 300+ runs | 0% tool result survival | Unknown | Not tracked |
+| **Tool integrity** | 100% across 5.5M tokens, 4,799 tool calls | 0% tool result survival | Unknown | Not tracked |
 | **LLM required** | No (optional Engine D) | Yes | Yes | Yes (355M params) |
 | **Cost** | $0 (deterministic) | LLM cost per call | LLM cost per call | GPU cost |
 | **Open source** | Yes | No | No | Yes |
-| **Framework adapters** | 5 (lossless round-trip) | None | None | None |
+| **Framework adapters** | 6 (lossless round-trip) | None | None | None |
 
 ## Install
 
@@ -45,9 +45,73 @@ console.log(`${report.compressionRatio.toFixed(1)}x compression`);
 console.log(`${report.originalTokens} -> ${report.compressedTokens} tokens`);
 ```
 
+## Stateful Sessions (Recommended)
+
+`MemoSiftSession` is the recommended entry point — it owns the anchor ledger, dedup state, and compression cache internally:
+
+```typescript
+import { MemoSiftSession } from "memosift";
+
+const session = new MemoSiftSession({ preset: "coding", model: "claude-sonnet-4-6" });
+
+// Compress framework-native messages (auto-detected format)
+const { messages: compressed, report } = await session.compress(messages, { usageTokens: 150_000 });
+
+// Facts survive across compression cycles
+for (const fact of session.facts) {
+  console.log(`[${fact.category}] ${fact.content}`);
+}
+
+// Check pressure without compressing
+const pressure = session.checkPressure(150_000);
+
+// Re-expand a collapsed message
+const original = session.expand(5);
+
+// Save/restore session state
+session.saveState("session.json");
+const restored = MemoSiftSession.loadState("session.json");
+```
+
+## Real-Time Streaming
+
+`MemoSiftStream` processes messages as they arrive, buffering until context pressure warrants compression:
+
+```typescript
+import { MemoSiftStream } from "memosift";
+
+const stream = new MemoSiftStream({ preset: "coding", model: "claude-sonnet-4-6" });
+
+for (const msg of incomingMessages) {
+  const event = await stream.push(msg);
+  if (event.compressed) {
+    console.log(`Saved ${event.tokensSaved} tokens at ${event.pressure} pressure`);
+  }
+}
+
+// Force compression at end of conversation
+await stream.flush();
+const compressed = stream.messages;
+const facts = stream.facts;
+```
+
+## Incremental Compression
+
+`CompressionState` caches IDF vocabulary, classification results, and token counts across `compress()` calls:
+
+```typescript
+import { MemoSiftSession } from "memosift";
+
+const session = new MemoSiftSession({ preset: "coding", model: "claude-sonnet-4-6", incremental: true });
+
+// Each call reuses cached state — faster on subsequent compressions
+const r1 = await session.compress(window1, { usageTokens: 100_000 });
+const r2 = await session.compress(window2, { usageTokens: 150_000 });
+```
+
 ## Adaptive Compression (Layer 0)
 
-MemoSift v0.2 reads the model's context window size, estimates current utilization, and dynamically adjusts every compression parameter. No more fixed thresholds that don't know whether you're running GPT-4o (128K) or Claude Opus 4.6 (1M).
+MemoSift reads the model's context window size, estimates current utilization, and dynamically adjusts every compression parameter. No more fixed thresholds that don't know whether you're running GPT-4o (128K) or Claude Opus 4.6 (1M).
 
 ```typescript
 import { compress, contextWindowFromModel } from "memosift";
@@ -71,7 +135,7 @@ const { messages: compressed, report } = await compress(messages, { contextWindo
 
 ## Framework Adapters
 
-All adapters preserve thinking blocks, cache control, annotations, and tool call nesting with lossless round-trip fidelity.
+6 adapters with lossless round-trip fidelity. All preserve thinking blocks, cache control, annotations, and tool call nesting.
 
 ### OpenAI SDK
 
@@ -118,6 +182,16 @@ import { compressLangChainMessages } from "memosift";
 
 const { messages: compressed, report } = await compressLangChainMessages(messages);
 // Works with HumanMessage, AIMessage, ToolMessage, SystemMessage
+```
+
+### Vercel AI SDK
+
+```typescript
+import { compressVercelMessages } from "memosift";
+
+const { messages: compressed, report } = await compressVercelMessages(messages);
+// Handles TextPart, ToolCallPart, ToolResultPart, ImagePart, FilePart
+// Works with CoreMessage format from Vercel AI SDK v3+
 ```
 
 ## Configuration
@@ -184,6 +258,18 @@ Messages Out + CompressionReport
 
 ## Benchmarks
 
+### Verified on Real Production Data
+
+| Metric | Result |
+|---|---|
+| **Compression** | 2.91x (coding) / 5.10x (general) on 11 real Claude Code sessions |
+| **Fact retention** | 90.4% (coding) / 466 out of 466 fidelity probes pass |
+| **Tool call integrity** | 100% across 5.5 million tokens, 4,799 tool calls |
+| **Quality probes** | 96.3% on 9 synthetic domains, **100% on real sessions** |
+| **Cost** | $0.00 -- zero LLM calls in deterministic mode |
+| **Latency** | <200ms per compression call |
+| **Tests** | 547 Python + 160 TypeScript, all passing |
+
 ### Adaptive Compression (SDK Conversations)
 
 | Pressure | Compression | Fidelity | Fact Retention | Tool Integrity |
@@ -212,14 +298,14 @@ Messages Out + CompressionReport
 | Aggressive | **20.7x** | 89.7% | $0.00 |
 | Max observed | **57.7x** | -- | $0.00 |
 
-### Functional Quality (LLM Judge, Factory.ai Methodology)
+### Cost Savings at Scale
 
-| System | Overall | Accuracy | Artifact Tracking | Compression |
-|:-------|:-------:|:--------:|:-----------------:|:-----------:|
-| **MemoSift** | **4.17/5.0** | **4.03** | **3.70** | **5.1x** |
-| Factory.ai | 3.70/5.0 | 4.04 | 2.45 | self-reported |
-| Anthropic | 3.44/5.0 | 3.74 | 2.33 | ~58.6% savings |
-| OpenAI | 3.35/5.0 | 3.43 | 2.19 | ~86-93% removed |
+| Volume | Opus ($15/MTok) | Sonnet ($3/MTok) | GPT-4o ($2.50/MTok) |
+|---|---|---|---|
+| 1M tokens/month | $9.82 saved | $1.96 saved | $1.64 saved |
+| 10M tokens/month | $98 saved | $20 saved | $16 saved |
+| 100M tokens/month | $982 saved | $196 saved | $164 saved |
+| **1B tokens/month** | **$9,816/mo saved** | **$1,963/mo saved** | **$1,636/mo saved** |
 
 ## Three-Zone Memory Model
 
@@ -247,6 +333,27 @@ const result2 = await compress(window2, { crossWindow: state });
 // Window 2 dedup catches content repeated from window 1
 ```
 
+## MCP Server
+
+Use MemoSift from any MCP-compatible client without writing code:
+
+```bash
+npx @memosift/mcp-server
+```
+
+```json
+{
+  "mcpServers": {
+    "memosift": {
+      "command": "npx",
+      "args": ["@memosift/mcp-server"]
+    }
+  }
+}
+```
+
+8 tools: `memosift_check_pressure`, `memosift_compress`, `memosift_configure`, `memosift_get_facts`, `memosift_expand`, `memosift_report`, `memosift_list_sessions`, `memosift_destroy`.
+
 ## Claude Code Integration
 
 The TypeScript package includes a PreCompact hook for Claude Code:
@@ -266,11 +373,11 @@ The TypeScript package includes a PreCompact hook for Claude Code:
 ## Development
 
 ```bash
-cd typescript && npm install && npm test  # 78 tests
+cd typescript && npm install && npm test  # 160 tests
 cd typescript && npm run lint
 ```
 
-Python package also available: `pip install memosift` (453 tests, 80%+ coverage).
+Python package also available: `pip install memosift` (547 tests, 80%+ coverage).
 
 ## License
 
