@@ -1,5 +1,9 @@
 # MemoSift
 
+
+
+<img width="1280" height="640" alt="github-banner-v0 6" src="https://github.com/user-attachments/assets/2f154f93-6ba7-4acb-838b-0270c09ed79f" />
+
 **Your AI agent dies at 150K tokens. MemoSift keeps it alive.**
 
 Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed — never over-compresses when there's room, aggressively compresses when the window is full. Zero LLM calls by default, sub-200ms latency, 100% tool call integrity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, LangChain, and Vercel AI SDK. Stateful sessions, real-time streaming, and an MCP server for zero-code integration.
