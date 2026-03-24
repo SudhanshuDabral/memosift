@@ -14,6 +14,7 @@ from memosift.core.types import (
 
 if TYPE_CHECKING:
     from memosift.config import MemoSiftConfig
+    from memosift.core.state import CompressionState
 
 # Error trace patterns — require at least 3 matching lines in a 20-line window.
 _ERROR_PATTERNS: list[re.Pattern[str]] = [
@@ -24,6 +25,10 @@ _ERROR_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"Exception in thread"),
     re.compile(r"^\s+File \".+\", line \d+", re.MULTILINE),
     re.compile(r"raise \w+Error"),
+    re.compile(r"throw new \w*Error"),  # JavaScript/TypeScript
+    re.compile(r"panic!\("),  # Rust
+    re.compile(r"Unhandled\s+(?:promise\s+)?rejection", re.IGNORECASE),  # Node.js
+    re.compile(r"^\s+at Object\.\<anonymous\>", re.MULTILINE),  # Node.js stack
 ]
 
 _MIN_ERROR_LINES = 3
@@ -48,12 +53,14 @@ _CODE_TOOL_NAMES: frozenset[str] = frozenset(
 def classify_messages(
     messages: list[MemoSiftMessage],
     config: MemoSiftConfig,
+    state: CompressionState | None = None,
 ) -> list[ClassifiedMessage]:
     """Classify each message by content type and assign a compression policy.
 
     Args:
         messages: The raw conversation messages.
         config: Pipeline configuration (controls ``recent_turns`` and policy overrides).
+        state: Optional CompressionState for caching classification results.
 
     Returns:
         A list of ``ClassifiedMessage`` wrappers, one per input message.
@@ -83,7 +90,19 @@ def classify_messages(
         # compression engines are safe and beneficial.  Plain TOOL_RESULT_TEXT
         # becomes RECENT_TURN within the recent window.
         elif msg.role == "tool":
-            tool_type = _classify_tool_result(msg)
+            # Try state cache for tool result sub-classification.
+            cached = state.get_cached_classification(msg.content) if state else None
+            if cached is not None and cached in {
+                ContentType.TOOL_RESULT_JSON,
+                ContentType.TOOL_RESULT_TEXT,
+                ContentType.CODE_BLOCK,
+                ContentType.ERROR_TRACE,
+            }:
+                tool_type = cached
+            else:
+                tool_type = _classify_tool_result(msg)
+                if state is not None:
+                    state.cache_classification(msg.content, tool_type)
             if in_recent_window and tool_type == ContentType.TOOL_RESULT_TEXT:
                 ctype = ContentType.RECENT_TURN
             else:

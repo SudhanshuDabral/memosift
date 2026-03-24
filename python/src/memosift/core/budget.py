@@ -299,13 +299,21 @@ def _truncate_largest(
         # Remove entire content.
         new_content = "[Content removed to fit budget.]"
     else:
-        # Truncate from the middle.
+        # Truncate from the middle, snapping to line boundaries.
         keep = len(content) - chars_to_remove
         half = keep // 2
+        # Snap start cut to nearest newline (avoid splitting mid-line).
+        snap_start = content.rfind("\n", max(0, half - 100), half + 100)
+        half_start = snap_start if snap_start > 0 else half
+        # Snap end cut to nearest newline.
+        end_cut = len(content) - (keep - half_start)
+        snap_end = content.find("\n", max(0, end_cut - 100), end_cut + 100)
+        half_end = snap_end if snap_end > 0 else end_cut
+        actual_removed = half_end - half_start
         new_content = (
-            content[:half]
-            + f"\n[... {chars_to_remove} characters omitted to fit budget ...]\n"
-            + content[-half:]
+            content[:half_start]
+            + f"\n[... {actual_removed} characters omitted to fit budget ...]\n"
+            + content[half_end:]
         )
 
     new_msg = MemoSiftMessage(

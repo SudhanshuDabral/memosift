@@ -1,5 +1,6 @@
 // Pipeline orchestrator — runs the 6-layer compression pipeline with Three-Zone Model.
 
+import { createHash } from "node:crypto";
 import type { MemoSiftConfig } from "../config.js";
 import { createConfig } from "../config.js";
 import type { MemoSiftLLMProvider } from "../providers/base.js";
@@ -27,6 +28,7 @@ import { verbatimCompress } from "./engines/verbatim.js";
 import { PHASE_KEEP_MULTIPLIERS, detectPhase } from "./phase-detector.js";
 import { optimizePosition } from "./positioner.js";
 import { scoreRelevance, scoreRelevanceLlm } from "./scorer.js";
+import type { CompressionState } from "./state.js";
 import {
   type AnchorLedger,
   type ClassifiedMessage,
@@ -111,6 +113,7 @@ export interface CompressOptions {
   crossWindow?: CrossWindowState | null;
   cache?: CompressionCache | null;
   contextWindow?: ContextWindowState | null;
+  state?: CompressionState | null;
 }
 
 export interface CompressResult {
@@ -127,8 +130,14 @@ export async function compress(
   const task = options?.task ?? null;
   const ledger = options?.ledger ?? null;
   const crossWindow = options?.crossWindow ?? null;
+  const incrementalState = options?.state ?? null;
   const report = new CompressionReport();
   const counter: MemoSiftLLMProvider = llm ?? new HeuristicTokenCounter();
+
+  // ── Incremental state ──
+  if (incrementalState !== null) {
+    incrementalState.sequence += 1;
+  }
 
   // ── Layer 0: Context-Aware Adaptive Thresholds ──
   const contentStrings = messages.map((m) => m.content);
@@ -180,7 +189,18 @@ export async function compress(
   const [zone1, zone2, zone3] = partitionZones(messages);
 
   let originalTokens = 0;
-  for (const m of messages) originalTokens += await counter.countTokens(m.content);
+  for (const m of messages) {
+    const cached = incrementalState?.tokenCache.get(_quickHash(m.content));
+    if (cached !== undefined) {
+      originalTokens += cached;
+    } else {
+      const count = await counter.countTokens(m.content);
+      originalTokens += count;
+      if (incrementalState) {
+        incrementalState.tokenCache.set(_quickHash(m.content), count);
+      }
+    }
+  }
 
   if (zone3.length === 0) {
     report.finalize(originalTokens, originalTokens, config.costPer1kTokens);
@@ -190,7 +210,7 @@ export async function compress(
   // ── Layer 1: Classify (Zone 3 only) ──
   let segments = await runLayer(
     "classifier",
-    async () => classifyMessages(zone3, config),
+    async () => classifyMessages(zone3, config, incrementalState),
     [],
     report,
   );
@@ -209,6 +229,15 @@ export async function compress(
   // ── Anchor Extraction (before compression, after classification) ──
   if (ledger && config.enableAnchorLedger) {
     extractAnchorsFromSegments(segments, ledger);
+  }
+
+  // ── Resolution Tracking (audit-only — does NOT modify compression) ──
+  try {
+    const { detectResolutionArcs, toSignals } = await import("./resolution-tracker.js");
+    const resReport = detectResolutionArcs(segments);
+    report.resolutionSignals = toSignals(resReport) as unknown as Record<string, unknown>;
+  } catch {
+    // Resolution tracking is optional — skip if module unavailable.
   }
 
   // ── Reasoning Chain Tracking (after anchor extraction) ──
@@ -275,7 +304,7 @@ export async function compress(
     segments =
       (await runLayer(
         "engine_pruner",
-        async () => pruneTokens(segments!, config, ledger),
+        async () => pruneTokens(segments!, config, ledger, incrementalState),
         segments,
         report,
       )) ?? segments;
@@ -400,10 +429,36 @@ export async function compress(
 
   const compressed = reassembleZones(zone1, zone2, compressedZone3);
 
+  // Estimate compressed token count (cache results for next call's Zone 2 hits).
   let compressedTokens = 0;
-  for (const m of compressed) compressedTokens += await counter.countTokens(m.content);
+  for (const m of compressed) {
+    const cached = incrementalState?.tokenCache.get(_quickHash(m.content));
+    if (cached !== undefined) {
+      compressedTokens += cached;
+    } else {
+      const count = await counter.countTokens(m.content);
+      compressedTokens += count;
+      if (incrementalState) {
+        incrementalState.tokenCache.set(_quickHash(m.content), count);
+      }
+    }
+  }
 
   report.finalize(originalTokens, compressedTokens, config.costPer1kTokens);
+
+  // ── Update incremental state ──
+  if (incrementalState !== null) {
+    const combined = compressed.map((m) => m.content).join("\n---\n");
+    incrementalState.outputHash = createHash("sha256").update(combined).digest("hex").slice(0, 32);
+    // Record content hashes for cross-call dedup seeding.
+    for (let i = 0; i < compressed.length; i++) {
+      const key = _quickHash(compressed[i]!.content);
+      if (!incrementalState.contentHashes.has(key)) {
+        incrementalState.contentHashes.set(key, i);
+      }
+    }
+  }
+
   return { messages: compressed, report };
 }
 
@@ -504,4 +559,11 @@ function toMessages(segments: ClassifiedMessage[]): MemoSiftMessage[] {
     seg.message._memosiftContentType = seg.contentType;
     return seg.message;
   });
+}
+
+/** Two-tier cache key: length + prefix for short, length + hash for long. */
+function _quickHash(content: string): string {
+  const n = content.length;
+  if (n < 256) return `L${n}:${content.slice(0, 32)}`;
+  return `L${n}:${createHash("sha256").update(content).digest("hex").slice(0, 12)}`;
 }

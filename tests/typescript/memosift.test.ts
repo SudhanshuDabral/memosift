@@ -1,32 +1,32 @@
 // MemoSift TypeScript test suite — mirrors critical Python tests.
 
-import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
 import {
-  ContentType,
-  CompressionPolicy,
+  MODEL_BUDGET_DEFAULTS,
+  MODEL_PRICING,
+  createConfig,
+  createPreset,
+} from "../../typescript/src/config.js";
+import { classifyMessages } from "../../typescript/src/core/classifier.js";
+import { CompressionCache, compress, partitionZones } from "../../typescript/src/core/pipeline.js";
+import {
   AnchorCategory,
   AnchorLedger,
-  createMessage,
+  CompressionPolicy,
+  ContentType,
+  DEFAULT_POLICIES,
   createClassified,
-  createDependencyMap,
   createCrossWindowState,
+  createDependencyMap,
+  createMessage,
   depMapAdd,
   depMapCanDrop,
   depMapDependentsOf,
-  DEFAULT_POLICIES,
 } from "../../typescript/src/core/types.js";
-import {
-  createConfig,
-  createPreset,
-  MODEL_BUDGET_DEFAULTS,
-  MODEL_PRICING,
-} from "../../typescript/src/config.js";
-import { CompressionReport } from "../../typescript/src/report.js";
 import { HeuristicTokenCounter } from "../../typescript/src/providers/heuristic.js";
-import { classifyMessages } from "../../typescript/src/core/classifier.js";
-import { compress, partitionZones, CompressionCache } from "../../typescript/src/core/pipeline.js";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { CompressionReport } from "../../typescript/src/report.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,7 +41,11 @@ function sampleMessages() {
     createMessage("user", "Hello"),
     createMessage("assistant", "Let me check.", {
       toolCalls: [
-        { id: "tc1", type: "function", function: { name: "read_file", arguments: '{"path":"test.py"}' } },
+        {
+          id: "tc1",
+          type: "function",
+          function: { name: "read_file", arguments: '{"path":"test.py"}' },
+        },
       ],
     }),
     createMessage("tool", 'def hello():\n    print("hello")\n', {
@@ -124,8 +128,18 @@ describe("DependencyMap", () => {
 describe("AnchorLedger", () => {
   it("adds facts and deduplicates", () => {
     const ledger = new AnchorLedger();
-    const added1 = ledger.add({ category: AnchorCategory.FILES, content: "src/auth.ts", turn: 1, confidence: 1.0 });
-    const added2 = ledger.add({ category: AnchorCategory.FILES, content: "src/auth.ts", turn: 2, confidence: 1.0 });
+    const added1 = ledger.add({
+      category: AnchorCategory.FILES,
+      content: "src/auth.ts",
+      turn: 1,
+      confidence: 1.0,
+    });
+    const added2 = ledger.add({
+      category: AnchorCategory.FILES,
+      content: "src/auth.ts",
+      turn: 2,
+      confidence: 1.0,
+    });
     expect(added1).toBe(true);
     expect(added2).toBe(false); // duplicate
     expect(ledger.facts).toHaveLength(1);
@@ -133,8 +147,18 @@ describe("AnchorLedger", () => {
 
   it("renders markdown with section headers", () => {
     const ledger = new AnchorLedger();
-    ledger.add({ category: AnchorCategory.FILES, content: "src/auth.ts", turn: 1, confidence: 1.0 });
-    ledger.add({ category: AnchorCategory.ERRORS, content: "TypeError: undefined", turn: 2, confidence: 1.0 });
+    ledger.add({
+      category: AnchorCategory.FILES,
+      content: "src/auth.ts",
+      turn: 1,
+      confidence: 1.0,
+    });
+    ledger.add({
+      category: AnchorCategory.ERRORS,
+      content: "TypeError: undefined",
+      turn: 2,
+      confidence: 1.0,
+    });
     const rendered = ledger.render();
     expect(rendered).toContain("## FILES TOUCHED");
     expect(rendered).toContain("## ERRORS ENCOUNTERED");
@@ -152,7 +176,12 @@ describe("AnchorLedger", () => {
 
   it("estimates token count", () => {
     const ledger = new AnchorLedger();
-    ledger.add({ category: AnchorCategory.INTENT, content: "Fix the auth module bug", turn: 1, confidence: 1.0 });
+    ledger.add({
+      category: AnchorCategory.INTENT,
+      content: "Fix the auth module bug",
+      turn: 1,
+      confidence: 1.0,
+    });
     expect(ledger.tokenEstimate()).toBeGreaterThan(0);
   });
 });
@@ -172,7 +201,7 @@ describe("createConfig", () => {
     expect(config.recentTurns).toBe(2);
     expect(config.tokenBudget).toBeNull();
     expect(config.enableSummarization).toBe(false);
-    expect(config.dedupSimilarityThreshold).toBe(0.80);
+    expect(config.dedupSimilarityThreshold).toBe(0.8);
     expect(config.preBucketBypass).toBe(true);
   });
 
@@ -190,7 +219,7 @@ describe("createConfig", () => {
   });
 
   it("rejects out-of-order compression thresholds", () => {
-    expect(() => createConfig({ softCompressionPct: 0.80, fullCompressionPct: 0.75 })).toThrow();
+    expect(() => createConfig({ softCompressionPct: 0.8, fullCompressionPct: 0.75 })).toThrow();
   });
 });
 
@@ -227,7 +256,7 @@ describe("MODEL_BUDGET_DEFAULTS & MODEL_PRICING", () => {
 
   it("has pricing for major models", () => {
     expect(MODEL_PRICING["gpt-4o"]).toBe(0.0025);
-    expect(MODEL_PRICING["default"]).toBe(0.003);
+    expect(MODEL_PRICING.default).toBe(0.003);
   });
 });
 
@@ -278,7 +307,12 @@ describe("classifyMessages", () => {
     };
     const msgs = vector.input.map((d) =>
       createMessage(d.role as "system" | "user" | "assistant" | "tool", d.content as string, {
-        toolCalls: (d.tool_calls as { id: string; type: string; function: { name: string; arguments: string } }[]) ?? null,
+        toolCalls:
+          (d.tool_calls as {
+            id: string;
+            type: string;
+            function: { name: string; arguments: string };
+          }[]) ?? null,
         toolCallId: (d.tool_call_id as string) ?? null,
         name: (d.name as string) ?? null,
       }),

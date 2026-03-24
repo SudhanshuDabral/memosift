@@ -15,6 +15,7 @@ from memosift.core.types import (
 
 if TYPE_CHECKING:
     from memosift.config import MemoSiftConfig
+    from memosift.core.state import CompressionState
 
 # Applies to TOOL_RESULT_TEXT, ASSISTANT_REASONING.
 _TARGET_POLICIES = {
@@ -45,6 +46,7 @@ def prune_tokens(
     segments: list[ClassifiedMessage],
     config: MemoSiftConfig,
     ledger: AnchorLedger | None = None,
+    state: CompressionState | None = None,
 ) -> list[ClassifiedMessage]:
     """Prune low-information tokens from eligible segments using IDF scoring.
 
@@ -57,13 +59,22 @@ def prune_tokens(
         segments: Classified messages from previous layers.
         config: Pipeline configuration (controls ``token_prune_keep_ratio``).
         ledger: Optional anchor ledger — tokens matching ledger facts are protected.
+        state: Optional CompressionState for IDF vocabulary caching.
 
     Returns:
         Segments with low-information tokens removed.
     """
-    # Compute IDF scores across all message contents.
+    # Compute IDF scores across all message contents, merging with cached vocabulary.
     all_contents = [seg.content for seg in segments]
     idf_scores = _compute_idf_scores(all_contents)
+
+    # Merge with cached IDF vocabulary (state has broader corpus from prior calls).
+    if state is not None:
+        for token, score in state.idf_vocabulary.items():
+            if token not in idf_scores:
+                idf_scores[token] = score
+        # Update state with newly computed scores.
+        state.idf_vocabulary.update(idf_scores)
     # Auto-protect tokens that appear in the anchor ledger (Item 1.3).
     # This ensures file paths, error messages, IDs, and other critical tokens
     # extracted into the ledger are never pruned from the source text.

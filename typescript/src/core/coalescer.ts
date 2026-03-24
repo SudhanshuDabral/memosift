@@ -73,7 +73,7 @@ function mergeRun(run: ClassifiedMessage[]): ClassifiedMessage {
     name: first.message.name,
     toolCallId: first.message.toolCallId,
     toolCalls: null,
-    metadata: first.message.metadata,
+    metadata: { ...first.message.metadata },
   });
 
   return {

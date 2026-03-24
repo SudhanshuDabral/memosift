@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from memosift.config import MemoSiftConfig
 from memosift.core.context_window import ContextWindowState, Pressure, estimate_tokens_heuristic
 from memosift.core.pipeline import CompressionCache, compress
+from memosift.core.state import CompressionState
 from memosift.core.types import AnchorFact, AnchorLedger, MemoSiftMessage
 from memosift.detect import VALID_FRAMEWORKS, detect_framework
 
@@ -55,6 +56,7 @@ class MemoSiftSession:
         model: str | None = None,
         llm: Any = None,
         framework: str | None = None,
+        incremental: bool = False,
         **config_overrides: Any,
     ) -> None:
         """Create a new compression session.
@@ -64,7 +66,10 @@ class MemoSiftSession:
             model: Model name for context window lookup + adaptive compression.
             llm: Optional ``MemoSiftLLMProvider`` for summarization/scoring.
             framework: Explicit framework ("openai", "anthropic", "agent_sdk", "adk",
-                "langchain"). Auto-detected from messages if omitted.
+                "langchain", "vercel_ai"). Auto-detected from messages if omitted.
+            incremental: When True, maintains a ``CompressionState`` across compress()
+                calls, caching IDF vocabulary, classification results, token counts,
+                and content hashes for faster incremental compression.
             **config_overrides: Any ``MemoSiftConfig`` field to override on the preset
                 (e.g., ``token_budget=50_000``, ``recent_turns=3``).
 
@@ -101,6 +106,8 @@ class MemoSiftSession:
 
         self._cross_window = CrossWindowState()
         self._cache = CompressionCache()
+        self._incremental = incremental
+        self._state: CompressionState | None = CompressionState() if incremental else None
 
         # Per-call state.
         self._last_report: CompressionReport | None = None
@@ -157,6 +164,7 @@ class MemoSiftSession:
             cross_window=self._cross_window,
             cache=self._cache,
             context_window=context_window,
+            state=self._state,
         )
 
         self._last_report = report
@@ -197,6 +205,11 @@ class MemoSiftSession:
 
             return adapt_in(messages)
 
+        if fw == "vercel_ai":
+            from memosift.adapters.vercel_ai import adapt_in
+
+            return adapt_in(messages)
+
         # Fallback — treat as OpenAI.
         from memosift.adapters.openai_sdk import adapt_in
 
@@ -233,6 +246,11 @@ class MemoSiftSession:
 
         if fw == "langchain":
             from memosift.adapters.langchain import adapt_out
+
+            return adapt_out(messages)
+
+        if fw == "vercel_ai":
+            from memosift.adapters.vercel_ai import adapt_out
 
             return adapt_out(messages)
 
@@ -289,6 +307,16 @@ class MemoSiftSession:
     def last_report(self) -> CompressionReport | None:
         """Compression report from the most recent compress() call."""
         return self._last_report
+
+    @property
+    def incremental(self) -> bool:
+        """Whether incremental compression is enabled."""
+        return self._incremental
+
+    @property
+    def state(self) -> CompressionState | None:
+        """The CompressionState for incremental mode, or None if disabled."""
+        return self._state
 
     @property
     def system(self) -> str | None:

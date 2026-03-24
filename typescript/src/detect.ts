@@ -15,7 +15,7 @@
  */
 export function detectFramework(
   messages: readonly unknown[],
-): "openai" | "anthropic" | "agent_sdk" | "adk" | "langchain" | "memosift" {
+): "openai" | "anthropic" | "agent_sdk" | "adk" | "langchain" | "memosift" | "vercel_ai" {
   if (messages.length === 0) {
     throw new Error("Cannot detect framework from empty message list");
   }
@@ -66,12 +66,24 @@ export function detectFramework(
       return "agent_sdk";
     }
 
-    // 5. Anthropic — content is array of blocks with Anthropic-specific type values.
+    // 5. Content as array of blocks — distinguish Vercel AI SDK from Anthropic.
     const content = rec.content;
     if (Array.isArray(content) && content.length > 0) {
       const firstBlock = content[0];
       if (typeof firstBlock === "object" && firstBlock !== null && "type" in firstBlock) {
         const blockType = (firstBlock as Record<string, unknown>).type;
+        // 5a. Vercel AI SDK — uses "tool-call" and "tool-result" (hyphenated).
+        if (blockType === "tool-call" || blockType === "tool-result") {
+          return "vercel_ai";
+        }
+        // Also detect Vercel from toolCallId/toolName on parts (unique to Vercel).
+        if (
+          (blockType === "text" || blockType === "tool-call" || blockType === "tool-result") &&
+          ("toolCallId" in firstBlock || "toolName" in firstBlock)
+        ) {
+          return "vercel_ai";
+        }
+        // 5b. Anthropic — uses "tool_use", "tool_result" (underscored).
         if (
           blockType === "text" ||
           blockType === "tool_use" ||
@@ -97,6 +109,14 @@ export const VALID_FRAMEWORKS = new Set([
   "adk",
   "langchain",
   "memosift",
+  "vercel_ai",
 ] as const);
 
-export type Framework = "openai" | "anthropic" | "agent_sdk" | "adk" | "langchain" | "memosift";
+export type Framework =
+  | "openai"
+  | "anthropic"
+  | "agent_sdk"
+  | "adk"
+  | "langchain"
+  | "memosift"
+  | "vercel_ai";

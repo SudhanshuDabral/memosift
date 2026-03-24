@@ -44,6 +44,7 @@ from memosift.providers.heuristic import HeuristicTokenCounter
 from memosift.report import CompressionReport
 
 if TYPE_CHECKING:
+    from memosift.core.state import CompressionState
     from memosift.providers.base import MemoSiftLLMProvider
 
 logger = logging.getLogger("memosift")
@@ -117,6 +118,7 @@ async def compress(
     cross_window: CrossWindowState | None = None,
     cache: CompressionCache | None = None,
     context_window: ContextWindowState | None = None,
+    state: CompressionState | None = None,
 ) -> tuple[list[MemoSiftMessage], CompressionReport]:
     """Compress a list of messages through the 6-layer pipeline.
 
@@ -139,6 +141,11 @@ async def compress(
         context_window: Context window state for adaptive compression (Layer 0).
             When provided, dynamically adjusts thresholds based on model context
             window utilization. Overrides ``config.context_window`` if both are set.
+        state: Optional CompressionState for incremental compression.
+            When provided, caches IDF vocabulary, content hashes, classification
+            results, and token counts across calls. The Three-Zone model already
+            skips Zone 2 (previously compressed) — state additionally caches
+            per-layer artifacts so Zone 3 processing is faster.
 
     Returns:
         A tuple of (compressed_messages, compression_report).
@@ -148,6 +155,10 @@ async def compress(
 
     report = CompressionReport()
     counter: MemoSiftLLMProvider = llm or HeuristicTokenCounter()
+
+    # ── Incremental state ──
+    if state is not None:
+        state.bump_sequence()
 
     # ── Layer 0: Context-Aware Adaptive Thresholds ──
     # Resolve context window state from: explicit param > config field > model_name.
@@ -195,10 +206,17 @@ async def compress(
     # ── Three-Zone Partitioning ──
     zone1, zone2, zone3 = _partition_zones(messages)
 
-    # Estimate original token count (all zones).
+    # Estimate original token count (all zones), using state cache when available.
     original_tokens = 0
     for m in messages:
-        original_tokens += await counter.count_tokens(m.content)
+        cached_count = state.get_cached_token_count(m.content) if state else None
+        if cached_count is not None:
+            original_tokens += cached_count
+        else:
+            count = await counter.count_tokens(m.content)
+            original_tokens += count
+            if state is not None:
+                state.cache_token_count(m.content, count)
 
     # If no raw messages to compress, return as-is.
     if not zone3:
@@ -208,7 +226,7 @@ async def compress(
     # ── Layer 1: Classify (Zone 3 only) ──
     segments = await _run_layer(
         "classifier",
-        lambda segs: _async_wrap(classify_messages(zone3, config)),
+        lambda segs: _async_wrap(classify_messages(zone3, config, state=state)),
         [],
         report,
     )
@@ -236,6 +254,17 @@ async def compress(
         extract_anchors_from_segments(segments, ledger)
         if llm is not None:
             await extract_anchors_llm(segments, ledger, llm)
+
+    # ── Resolution Tracking (audit-only — does NOT modify compression) ──
+    # Detect question→decision arcs and supersession patterns for observability.
+    # Results are logged to the report; compression behavior is unaffected.
+    try:
+        from memosift.core.resolution_tracker import detect_resolution_arcs
+
+        resolution_report = detect_resolution_arcs(segments)
+        report.resolution_signals = resolution_report.to_dict()
+    except Exception as e:
+        logger.debug("Resolution tracking skipped: %s", e)
 
     # ── Reasoning Chain Tracking (after anchor extraction) ──
     # Detect logical dependencies ("therefore", "so we can", etc.) and
@@ -325,7 +354,7 @@ async def compress(
         segments = (
             await _run_layer(
                 "engine_pruner",
-                lambda segs: _async_wrap(prune_tokens(segs, config, ledger=ledger)),
+                lambda segs: _async_wrap(prune_tokens(segs, config, ledger=ledger, state=state)),
                 segments,
                 report,
             )
@@ -476,12 +505,27 @@ async def compress(
 
     compressed = _reassemble_zones(zone1, zone2, compressed_zone3)
 
-    # Estimate compressed token count.
+    # Estimate compressed token count (cache results for next call's Zone 2 hits).
     compressed_tokens = 0
     for m in compressed:
-        compressed_tokens += await counter.count_tokens(m.content)
+        cached_count = state.get_cached_token_count(m.content) if state else None
+        if cached_count is not None:
+            compressed_tokens += cached_count
+        else:
+            count = await counter.count_tokens(m.content)
+            compressed_tokens += count
+            if state is not None:
+                state.cache_token_count(m.content, count)
 
     report.finalize(original_tokens, compressed_tokens, config.cost_per_1k_tokens)
+
+    # ── Update incremental state ──
+    if state is not None:
+        state.set_output_hash([m.content for m in compressed])
+        # Record content hashes for cross-call dedup seeding.
+        for i, m in enumerate(compressed):
+            state.record_content_hash(m.content, i)
+
     return compressed, report
 
 

@@ -1,17 +1,17 @@
 // Tests for Layer 0 adaptive compression integration in the TypeScript pipeline.
 // Verifies parity with the Python implementation.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { createConfig } from "../../typescript/src/config.js";
 import {
   Pressure,
-  createContextWindowState,
-  contextWindowFromModel,
   computeAdaptiveThresholds,
-  resolveContextWindow,
+  contextWindowFromModel,
+  createContextWindowState,
   estimateTokensHeuristic,
+  resolveContextWindow,
 } from "../../typescript/src/core/context-window.js";
-import { createConfig } from "../../typescript/src/config.js";
-import { compress, CompressionCache } from "../../typescript/src/core/pipeline.js";
+import { CompressionCache, compress } from "../../typescript/src/core/pipeline.js";
 import { createMessage } from "../../typescript/src/core/types.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -243,9 +243,7 @@ describe("Pipeline L0 adaptive integration", () => {
 
 describe("Adapter contextWindow forwarding", () => {
   it("compressOpenAIMessages accepts contextWindow", async () => {
-    const { compressOpenAIMessages } = await import(
-      "../../typescript/src/adapters/openai-sdk.js"
-    );
+    const { compressOpenAIMessages } = await import("../../typescript/src/adapters/openai-sdk.js");
     const messages = [
       { role: "system", content: "You are helpful." },
       { role: "user", content: "Hello" },

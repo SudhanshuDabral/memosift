@@ -2,7 +2,22 @@
 
 **Your AI agent dies at 150K tokens. MemoSift keeps it alive.**
 
-Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed — never over-compresses when there's room, aggressively compresses when the window is full. Zero LLM calls by default, sub-2s latency, 100% fidelity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, and LangChain.
+Context-aware compression engine that sits between your agent and the LLM. Reads the model's context window, detects pressure, and compresses only when needed — never over-compresses when there's room, aggressively compresses when the window is full. Zero LLM calls by default, sub-200ms latency, 100% tool call integrity. Drop-in adapters for OpenAI, Anthropic, Claude Agent SDK, Google ADK, LangChain, and Vercel AI SDK.
+
+### Verified on Real Production Data
+
+| Metric | Result |
+|---|---|
+| **Compression** | 2.91x (coding) / 5.10x (general) on 11 real Claude Code sessions |
+| **Fact retention** | 90.4% (coding) / 466 out of 466 fidelity probes pass |
+| **Tool call integrity** | 100% across 5.5 million tokens, 4,799 tool calls |
+| **Quality probes** | 96.3% on 9 synthetic domains, **100% on real sessions** |
+| **Cost** | $0.00 — zero LLM calls in deterministic mode |
+| **Latency** | <200ms per compression call |
+| **Adapters** | 6 frameworks, lossless round-trip |
+| **Tests** | 547 Python + 160 TypeScript, all passing |
+
+See [ACHIEVEMENTS.md](ACHIEVEMENTS.md) for full benchmark details and per-session breakdowns.
 
 ## Install
 
@@ -169,6 +184,24 @@ compressed_msgs, report = await compress_langchain_messages(messages)
 import { compressLangChainMessages } from "memosift";
 
 const { messages: compressed, report } = await compressLangChainMessages(messages);
+```
+
+### Vercel AI SDK
+
+```python
+# Python
+from memosift.adapters.vercel_ai import compress_vercel_messages
+
+compressed_msgs, report = await compress_vercel_messages(messages)
+# Handles TextPart, ToolCallPart, ToolResultPart, ImagePart, FilePart
+```
+
+```typescript
+// TypeScript
+import { compressVercelMessages } from "memosift";
+
+const { messages: compressed, report } = await compressVercelMessages(messages);
+// Works with CoreMessage format from Vercel AI SDK v3+
 ```
 
 ## Adaptive Compression (Layer 0)
@@ -567,10 +600,10 @@ This ensures file paths, error messages, and decisions survive Claude Code's con
 ```bash
 # Python
 cd python && pip install -e ".[dev]"
-cd .. && python -m pytest tests/python/ -x -q   # 453 tests
+cd .. && python -m pytest tests/python/ -x -q   # 547 tests
 
 # TypeScript
-cd typescript && npm install && npm test          # 78 tests
+cd typescript && npm install && npm test          # 160 tests
 
 # Lint & format
 cd python && ruff format src/ && ruff check src/

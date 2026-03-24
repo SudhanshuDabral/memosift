@@ -27,6 +27,8 @@ export type {
 
 export { compress, CompressionCache } from "./core/pipeline.js";
 export type { CompressOptions, CompressResult } from "./core/pipeline.js";
+export { createCompressionState } from "./core/state.js";
+export type { CompressionState } from "./core/state.js";
 export { partitionZones } from "./core/pipeline.js";
 
 export { ConversationPhase, PHASE_KEEP_MULTIPLIERS, detectPhase } from "./core/phase-detector.js";
@@ -69,6 +71,10 @@ export { HeuristicTokenCounter } from "./providers/heuristic.js";
 export { MemoSiftSession } from "./session.js";
 export type { MemoSiftSessionOptions, SessionCompressOptions } from "./session.js";
 
+// Streaming compression.
+export { MemoSiftStream } from "./stream.js";
+export type { StreamEvent } from "./stream.js";
+
 // Framework auto-detection.
 export { detectFramework, VALID_FRAMEWORKS } from "./detect.js";
 export type { Framework } from "./detect.js";
@@ -104,3 +110,9 @@ export {
   adaptOut as adkAdaptOut,
   compressAdkEvents,
 } from "./adapters/google-adk.js";
+export {
+  adaptIn as vercelAdaptIn,
+  adaptOut as vercelAdaptOut,
+  compressVercelMessages,
+  VercelAILLMProvider,
+} from "./adapters/vercel-ai.js";

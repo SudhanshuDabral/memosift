@@ -1,13 +1,13 @@
 // Tests for MemoSiftSession.
 
-import { describe, it, expect } from "vitest";
-import { MemoSiftSession } from "../../typescript/src/session.js";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { Pressure } from "../../typescript/src/core/context-window.js";
 import { createMessage } from "../../typescript/src/core/types.js";
 import { CompressionReport } from "../../typescript/src/report.js";
-import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { MemoSiftSession } from "../../typescript/src/session.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -226,7 +226,9 @@ describe("saveState / loadState", () => {
       const restored = MemoSiftSession.loadState(path);
       expect(restored.facts.length).toBe(factsBefore);
     } finally {
-      try { unlinkSync(path); } catch {}
+      try {
+        unlinkSync(path);
+      } catch {}
     }
   });
 
@@ -240,20 +242,25 @@ describe("saveState / loadState", () => {
       const restored = MemoSiftSession.loadState(path);
       expect(restored.expand(0)).toBeUndefined();
     } finally {
-      try { unlinkSync(path); } catch {}
+      try {
+        unlinkSync(path);
+      } catch {}
     }
   });
 
   it("loadState with overrides", () => {
     const path = tmpPath();
     try {
-      writeFileSync(path, JSON.stringify({
-        ledger: { facts: [] },
-        cross_window_hashes: [],
-        framework: "openai",
-        model: "gpt-4o",
-        config_preset: "general",
-      }));
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ledger: { facts: [] },
+          cross_window_hashes: [],
+          framework: "openai",
+          model: "gpt-4o",
+          config_preset: "general",
+        }),
+      );
 
       const restored = MemoSiftSession.loadState(path, "coding", {
         model: "claude-sonnet-4-6",
@@ -261,7 +268,9 @@ describe("saveState / loadState", () => {
       });
       expect(restored.facts).toEqual([]);
     } finally {
-      try { unlinkSync(path); } catch {}
+      try {
+        unlinkSync(path);
+      } catch {}
     }
   });
 });

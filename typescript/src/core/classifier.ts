@@ -1,6 +1,7 @@
 // Layer 1: Content segmentation and classification.
 
 import type { MemoSiftConfig } from "../config.js";
+import type { CompressionState } from "./state.js";
 import {
   type ClassifiedMessage,
   ContentType,
@@ -17,6 +18,10 @@ const ERROR_PATTERNS = [
   /Exception in thread/,
   /^\s+File ".+", line \d+/m,
   /raise \w+Error/,
+  /throw new \w*Error/,
+  /panic!\(/,
+  /Unhandled\s+(?:promise\s+)?rejection/i,
+  /^\s+at Object\.<anonymous>/m,
 ];
 
 const MIN_ERROR_LINES = 3;
@@ -34,10 +39,28 @@ const CODE_TOOL_NAMES = new Set([
 export function classifyMessages(
   messages: MemoSiftMessage[],
   config: MemoSiftConfig,
+  state?: CompressionState | null,
 ): ClassifiedMessage[] {
   const recentBoundary = findNthUserMessageFromEnd(messages, config.recentTurns);
   const lastUser = lastUserIndex(messages);
   const result: ClassifiedMessage[] = [];
+  const { cacheClassification, getCachedClassification } = (() => {
+    // Lazy import to avoid circular deps at module level.
+    // Only used when state is provided.
+    if (!state) return { cacheClassification: null, getCachedClassification: null };
+    return {
+      cacheClassification: (content: string, ct: ContentType) => {
+        const { createHash } = require("node:crypto");
+        const key = createHash("sha256").update(content).digest("hex").slice(0, 16);
+        state.classificationCache.set(key, ct);
+      },
+      getCachedClassification: (content: string): ContentType | null => {
+        const { createHash } = require("node:crypto");
+        const key = createHash("sha256").update(content).digest("hex").slice(0, 16);
+        return state.classificationCache.get(key) ?? null;
+      },
+    };
+  })();
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]!;
@@ -51,7 +74,21 @@ export function classifyMessages(
     } else if (msg.role === "user" && i === lastUser) {
       ctype = ContentType.USER_QUERY;
     } else if (msg.role === "tool") {
-      const toolType = classifyToolResult(msg);
+      // Try state cache for tool result sub-classification.
+      const TOOL_TYPES = new Set([
+        ContentType.TOOL_RESULT_JSON,
+        ContentType.TOOL_RESULT_TEXT,
+        ContentType.CODE_BLOCK,
+        ContentType.ERROR_TRACE,
+      ]);
+      const cached = getCachedClassification?.(msg.content);
+      let toolType: ContentType;
+      if (cached && TOOL_TYPES.has(cached)) {
+        toolType = cached;
+      } else {
+        toolType = classifyToolResult(msg);
+        cacheClassification?.(msg.content, toolType);
+      }
       ctype =
         inRecentWindow && toolType === ContentType.TOOL_RESULT_TEXT
           ? ContentType.RECENT_TURN

@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-24
+
+### Added
+
+- **Vercel AI SDK adapter** — 6th framework adapter for the largest TypeScript AI ecosystem. Lossless round-trip for `CoreMessage` format: `TextPart`, `ToolCallPart`, `ToolResultPart`, `ImagePart`, `FilePart`. Hyphenated part types (`tool-call`, `tool-result`) correctly distinguished from Anthropic's underscored variants.
+  - `compressVercelMessages()` convenience function (Python + TypeScript)
+  - `VercelAILLMProvider` wraps Vercel AI SDK's `generateText()` (TypeScript)
+  - Auto-detection via `detectFramework()` — `"vercel_ai"` added to `VALID_FRAMEWORKS`
+  - `ai >= 3.0.0` optional peer dependency
+  - Deep import: `memosift/adapters/vercel-ai`
+- **Incremental compression** — `CompressionState` caches IDF vocabulary, classification results, and token counts across `compress()` calls. The Three-Zone Model already skips Zone 2 (previously compressed); state additionally caches per-layer artifacts so Zone 3 processing is faster on subsequent calls.
+  - `state` parameter on `compress()` (Python + TypeScript)
+  - `MemoSiftSession(incremental=True)` creates and maintains state automatically
+  - `CompressionState` exported from both packages
+- **`MemoSiftStream`** — real-time compression stream for processing messages as they arrive. Buffers messages until context pressure warrants compression, then compresses only new messages.
+  - `push(message)` → returns `StreamEvent` with action/pressure/tokens_saved
+  - `flush()` → forces compression regardless of pressure
+  - `messages`, `facts`, `session` properties
+- **Audit-only resolution tracker** — detects question→deliberation→decision arcs and supersession patterns (corrections, status updates) in conversations. Logged to `CompressionReport.resolution_signals` as informational signals — does NOT modify compression behavior. Provides data for future semantic compression decisions.
+- **Real session fidelity probes** — 466 auto-extracted quality probes from 11 real Claude Code sessions (5.5M tokens). Validates that file paths, error messages, tool names, and decisions survive compression on production data. 100% pass rate on coding preset.
+  - `benchmarks/session_probe_extractor.py` — auto-extract probes from JSONL sessions
+  - `benchmarks/session_fidelity.py` — run probes against compressed real sessions
+- 16 new budget enforcement tests including Hypothesis property tests
+- 34 new Vercel adapter tests (Python), 20 new incremental tests, 10 new stream tests
+- 30+ new TypeScript tests (Vercel adapter, incremental, stream)
+
+### Fixed
+
+- **Mutable metadata sharing in coalescer** — merged messages now use a shallow copy of metadata instead of sharing a reference with the original, preventing cross-contamination between messages
+- **Missing error patterns in classifier** — added `throw new Error` (JavaScript/TypeScript), `panic!()` (Rust), `Unhandled rejection` (Node.js), and Node.js stack frame patterns. Non-Python errors now correctly classified as `ERROR_TRACE` instead of `TOOL_RESULT_TEXT`
+- **Budget truncation at character boundary** — emergency truncation now snaps to nearest newline boundary instead of splitting mid-word, mid-URL, or mid-identifier
+- **Inconsistent content hashing in verbatim engine** — re-read detection now normalizes whitespace before hashing (consistent with deduplicator), preventing false negatives on content with trailing whitespace differences
+
+### Changed
+
+- Version bumped to 0.6.0 (Python + TypeScript)
+- `VALID_FRAMEWORKS` now includes `"vercel_ai"` (7 frameworks total)
+- `MemoSiftSession` accepts `incremental: bool` parameter
+- `CompressionReport` includes `resolution_signals` field (audit-only)
+
 ## [0.5.0] - 2026-03-23
 
 ### Added

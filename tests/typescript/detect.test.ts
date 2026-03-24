@@ -1,8 +1,8 @@
 // Tests for framework auto-detection.
 
-import { describe, it, expect } from "vitest";
-import { detectFramework, VALID_FRAMEWORKS } from "../../typescript/src/detect.js";
+import { describe, expect, it } from "vitest";
 import { createMessage } from "../../typescript/src/core/types.js";
+import { VALID_FRAMEWORKS, detectFramework } from "../../typescript/src/detect.js";
 
 describe("detectFramework", () => {
   it("throws on empty array", () => {
@@ -97,15 +97,21 @@ describe("detectFramework", () => {
   // ── Priority / Edge Cases ────────────────────────────────────────
 
   it("ADK takes priority over anthropic content blocks", () => {
-    const msgs = [
-      { role: "model", content: [{ type: "text", text: "hi" }], function_calls: [] },
-    ];
+    const msgs = [{ role: "model", content: [{ type: "text", text: "hi" }], function_calls: [] }];
     expect(detectFramework(msgs)).toBe("adk");
   });
 
-  it("VALID_FRAMEWORKS has all 6 frameworks", () => {
-    expect(VALID_FRAMEWORKS.size).toBe(6);
-    for (const fw of ["openai", "anthropic", "agent_sdk", "adk", "langchain", "memosift"]) {
+  it("VALID_FRAMEWORKS has all 7 frameworks", () => {
+    expect(VALID_FRAMEWORKS.size).toBe(7);
+    for (const fw of [
+      "openai",
+      "anthropic",
+      "agent_sdk",
+      "adk",
+      "langchain",
+      "memosift",
+      "vercel_ai",
+    ]) {
       expect(VALID_FRAMEWORKS.has(fw as never)).toBe(true);
     }
   });

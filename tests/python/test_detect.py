@@ -138,4 +138,4 @@ class TestDetectFramework:
         assert detect_framework(msgs) == "adk"
 
     def test_valid_frameworks_constant(self):
-        assert VALID_FRAMEWORKS == {"openai", "anthropic", "agent_sdk", "adk", "langchain", "memosift"}
+        assert VALID_FRAMEWORKS == {"openai", "anthropic", "agent_sdk", "adk", "langchain", "memosift", "vercel_ai"}

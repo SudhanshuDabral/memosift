@@ -189,7 +189,12 @@ function truncateLargest(
   } else {
     const keep = content.length - charsToRemove;
     const half = Math.floor(keep / 2);
-    newContent = `${content.slice(0, half)}\n[... ${charsToRemove} characters omitted to fit budget ...]\n${content.slice(-half)}`;
+    const snapStart = content.lastIndexOf("\n", half + 100);
+    const halfStart = snapStart > Math.max(0, half - 100) ? snapStart : half;
+    const snapEnd = content.indexOf("\n", content.length - half - 100);
+    const halfEnd =
+      snapEnd !== -1 && snapEnd < content.length - half + 100 ? snapEnd : content.length - half;
+    newContent = `${content.slice(0, halfStart)}\n[... ${charsToRemove} characters omitted to fit budget ...]\n${content.slice(halfEnd)}`;
   }
 
   const newMsg = createMessage(largest.seg.message.role, newContent, {

@@ -1,24 +1,24 @@
 // Tests for Layer 0: Context-aware adaptive compression.
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { createConfig } from "../../typescript/src/config.js";
 import {
-  Pressure,
-  createContextWindowState,
-  contextWindowFromModel,
-  effectiveCapacity,
-  availableTokens,
-  usageRatio,
-  remainingRatio,
-  pressure,
-  lookupContextWindow,
-  lookupOutputLimit,
-  computeAdaptiveThresholds,
-  resolveContextWindow,
-  estimateTokensHeuristic,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_OUTPUT_RESERVE,
+  Pressure,
+  availableTokens,
+  computeAdaptiveThresholds,
+  contextWindowFromModel,
+  createContextWindowState,
+  effectiveCapacity,
+  estimateTokensHeuristic,
+  lookupContextWindow,
+  lookupOutputLimit,
+  pressure,
+  remainingRatio,
+  resolveContextWindow,
+  usageRatio,
 } from "../../typescript/src/core/context-window.js";
-import { createConfig } from "../../typescript/src/config.js";
 
 // ── Pressure Enum ────────────────────────────────────────────────────────
 

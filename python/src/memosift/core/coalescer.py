@@ -113,7 +113,7 @@ def _merge_run(run: list[ClassifiedMessage]) -> ClassifiedMessage:
         name=first.message.name,
         tool_call_id=first.message.tool_call_id,
         tool_calls=None,
-        metadata=first.message.metadata,
+        metadata=dict(first.message.metadata),
     )
 
     return dc_replace(

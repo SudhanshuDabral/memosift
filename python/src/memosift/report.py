@@ -58,6 +58,14 @@ class CompressionReport:
     ran but no fields were changed.
     """
 
+    resolution_signals: dict | None = None
+    """Audit-only semantic signals detected during compression.
+
+    Contains counts of detected question→decision arcs and supersession
+    patterns. Does NOT affect compression behavior — informational only.
+    ``None`` when resolution tracking is not active.
+    """
+
     def add_layer(
         self,
         name: str,

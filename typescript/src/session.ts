@@ -12,6 +12,7 @@ import {
 } from "./core/context-window.js";
 import { CompressionCache, compress } from "./core/pipeline.js";
 import type { CompressResult } from "./core/pipeline.js";
+import { type CompressionState, createCompressionState } from "./core/state.js";
 import {
   type AnchorCategory,
   AnchorLedger,
@@ -40,6 +41,7 @@ import {
 } from "./adapters/langchain.js";
 // Adapters — adaptIn/adaptOut use duck typing on plain objects, no framework SDK imports needed.
 import { adaptIn as openaiAdaptIn, adaptOut as openaiAdaptOut } from "./adapters/openai-sdk.js";
+import { adaptIn as vercelAdaptIn, adaptOut as vercelAdaptOut } from "./adapters/vercel-ai.js";
 
 /** Valid config field names for override validation. */
 const CONFIG_FIELDS = new Set([
@@ -74,6 +76,7 @@ export interface MemoSiftSessionOptions {
   model?: string;
   llm?: MemoSiftLLMProvider;
   framework?: Framework;
+  incremental?: boolean;
   configOverrides?: Partial<MemoSiftConfig>;
 }
 
@@ -104,6 +107,8 @@ export class MemoSiftSession {
   private _ledger: AnchorLedger;
   private _crossWindow: CrossWindowState;
   private _cache: CompressionCache;
+  private _incremental: boolean;
+  private _state: CompressionState | null;
   private _lastReport: CompressionReport | null = null;
   private _system: string | null = null;
 
@@ -145,6 +150,8 @@ export class MemoSiftSession {
     this._ledger = new AnchorLedger();
     this._crossWindow = createCrossWindowState();
     this._cache = new CompressionCache();
+    this._incremental = options?.incremental ?? false;
+    this._state = this._incremental ? createCompressionState() : null;
   }
 
   /**
@@ -186,6 +193,7 @@ export class MemoSiftSession {
       crossWindow: this._crossWindow,
       cache: this._cache,
       contextWindow,
+      state: this._state,
     });
 
     this._lastReport = report;
@@ -203,6 +211,7 @@ export class MemoSiftSession {
     if (fw === "agent_sdk") return agentSdkAdaptIn(messages);
     if (fw === "adk") return adkAdaptIn(messages as Record<string, unknown>[]);
     if (fw === "langchain") return langchainAdaptIn(messages);
+    if (fw === "vercel_ai") return vercelAdaptIn(messages as Record<string, unknown>[]);
     return openaiAdaptIn(messages as Record<string, unknown>[]);
   }
 
@@ -218,6 +227,7 @@ export class MemoSiftSession {
     if (fw === "agent_sdk") return agentSdkAdaptOut(messages);
     if (fw === "adk") return adkAdaptOut(messages);
     if (fw === "langchain") return langchainAdaptOut(messages);
+    if (fw === "vercel_ai") return vercelAdaptOut(messages);
     return openaiAdaptOut(messages);
   }
 
@@ -262,6 +272,16 @@ export class MemoSiftSession {
   /** Compression report from the most recent compress() call. */
   get lastReport(): CompressionReport | null {
     return this._lastReport;
+  }
+
+  /** Whether incremental compression is enabled. */
+  get incremental(): boolean {
+    return this._incremental;
+  }
+
+  /** The CompressionState for incremental mode, or null if disabled. */
+  get state(): CompressionState | null {
+    return this._state;
   }
 
   /** Anthropic system prompt from the most recent compression. */

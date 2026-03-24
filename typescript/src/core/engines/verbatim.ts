@@ -44,7 +44,8 @@ export function verbatimCompress(
       seg.message.content.length > 200 &&
       REREAD_TYPES.has(seg.contentType)
     ) {
-      const contentHash = createHash("sha256").update(seg.message.content).digest("hex");
+      const normalized = seg.message.content.replace(/\s+/g, " ").trim();
+      const contentHash = createHash("sha256").update(normalized).digest("hex");
       if (seen.has(contentHash)) {
         const firstIndex = seen.get(contentHash)!;
         const label = extractContentLabel(seg.message.content);

@@ -98,7 +98,10 @@ def verbatim_compress(
                 ContentType.CODE_BLOCK,
             }
         ):
-            content_hash = hashlib.sha256(seg.content.encode("utf-8")).hexdigest()
+            # Normalize whitespace before hashing (consistent with deduplicator).
+            content_hash = hashlib.sha256(
+                re.sub(r"\s+", " ", seg.content).strip().encode("utf-8")
+            ).hexdigest()
             if content_hash in seen_content_hashes:
                 first_index = seen_content_hashes[content_hash]
                 # Extract a short label (first file path or first 60 chars).

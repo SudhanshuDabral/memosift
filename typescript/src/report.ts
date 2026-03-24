@@ -37,6 +37,14 @@ export class CompressionReport {
    */
   adaptiveOverrides: Record<string, [unknown, unknown]> | null = null;
 
+  /**
+   * Audit-only semantic signals detected during compression.
+   * Contains counts of detected question→decision arcs and supersession patterns.
+   * Does NOT affect compression behavior — informational only.
+   * null when resolution tracking is not active.
+   */
+  resolutionSignals: Record<string, unknown> | null = null;
+
   addLayer(
     name: string,
     inputTokens: number,

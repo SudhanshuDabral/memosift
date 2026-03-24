@@ -89,11 +89,11 @@ jobs:
 
       - name: Lint
         run: |
-          cd typescript && npx biome check --config-path ../biome.json ../typescript/src/
+          npx --prefix typescript biome check --config-path biome.json typescript/src/
 
       - name: Format check
         run: |
-          cd typescript && npx biome format --config-path ../biome.json ../typescript/src/
+          npx --prefix typescript biome format --config-path biome.json typescript/src/
 
       - name: Run tests
         run: |

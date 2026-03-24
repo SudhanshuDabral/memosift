@@ -72,13 +72,21 @@ def detect_framework(messages: list[Any]) -> str:
             if "langchain" not in module:
                 return "agent_sdk"
 
-        # 5. Anthropic — content is a list of blocks with Anthropic-specific type values.
+        # 5. Content as list of blocks — distinguish Vercel AI SDK from Anthropic.
         if isinstance(msg, dict):
             content = msg.get("content")
             if isinstance(content, list) and len(content) > 0:
                 first_block = content[0]
                 if isinstance(first_block, dict):
                     block_type = first_block.get("type", "")
+                    # 5a. Vercel AI SDK — uses "tool-call" and "tool-result" (hyphenated).
+                    if block_type in ("tool-call", "tool-result"):
+                        return "vercel_ai"
+                    if block_type in ("text", "tool-call", "tool-result") and (
+                        "toolCallId" in first_block or "toolName" in first_block
+                    ):
+                        return "vercel_ai"
+                    # 5b. Anthropic — uses "tool_use", "tool_result" (underscored).
                     if block_type in (
                         "text",
                         "tool_use",
@@ -93,4 +101,6 @@ def detect_framework(messages: list[Any]) -> str:
 
 
 # Valid framework identifiers for validation.
-VALID_FRAMEWORKS = frozenset({"openai", "anthropic", "agent_sdk", "adk", "langchain", "memosift"})
+VALID_FRAMEWORKS = frozenset(
+    {"openai", "anthropic", "agent_sdk", "adk", "langchain", "memosift", "vercel_ai"}
+)

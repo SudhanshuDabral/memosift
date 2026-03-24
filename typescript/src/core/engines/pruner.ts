@@ -1,6 +1,7 @@
 // Engine B: IDF-based token pruning — remove low-information words.
 
 import type { MemoSiftConfig } from "../../config.js";
+import type { CompressionState } from "../state.js";
 import {
   type AnchorLedger,
   type ClassifiedMessage,
@@ -30,9 +31,21 @@ export function pruneTokens(
   segments: ClassifiedMessage[],
   config: MemoSiftConfig,
   ledger?: AnchorLedger | null,
+  state?: CompressionState | null,
 ): ClassifiedMessage[] {
   const allContents = segments.map((s) => s.message.content);
   const idfScores = computeIdfScores(allContents);
+
+  // Merge with cached IDF vocabulary from state (broader corpus from prior calls).
+  if (state) {
+    for (const [token, score] of state.idfVocabulary) {
+      if (!idfScores.has(token)) idfScores.set(token, score);
+    }
+    // Update state with newly computed scores.
+    for (const [token, score] of idfScores) {
+      state.idfVocabulary.set(token, score);
+    }
+  }
 
   // Auto-protect tokens from anchor ledger (Item 1.3).
   const ledgerLower = new Set<string>();

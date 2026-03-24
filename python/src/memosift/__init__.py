@@ -5,6 +5,7 @@ from memosift.config import MODEL_BUDGET_DEFAULTS, MODEL_PRICING, MemoSiftConfig
 from memosift.core.context_window import ContextWindowState, Pressure
 from memosift.core.deduplicator import CrossWindowState
 from memosift.core.pipeline import compress
+from memosift.core.state import CompressionState
 from memosift.core.types import (
     AnchorCategory,
     AnchorFact,
@@ -21,6 +22,7 @@ from memosift.detect import detect_framework
 from memosift.providers.base import LLMResponse, MemoSiftLLMProvider
 from memosift.report import CompressionReport, Decision, LayerReport
 from memosift.session import MemoSiftSession
+from memosift.stream import MemoSiftStream, StreamEvent
 
 __all__ = [
     "AnchorCategory",
@@ -31,6 +33,7 @@ __all__ = [
     "CrossWindowState",
     "CompressionPolicy",
     "CompressionReport",
+    "CompressionState",
     "ContextWindowState",
     "ContentType",
     "Decision",
@@ -40,7 +43,9 @@ __all__ = [
     "MemoSiftLLMProvider",
     "MemoSiftMessage",
     "MemoSiftSession",
+    "MemoSiftStream",
     "Pressure",
+    "StreamEvent",
     "MODEL_BUDGET_DEFAULTS",
     "MODEL_PRICING",
     "LLMResponse",
