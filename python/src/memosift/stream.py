@@ -93,9 +93,7 @@ class MemoSiftStream:
         self._messages.append(message)
 
         # Check if compression is needed based on pressure.
-        pressure = self._session.check_pressure(
-            usage_tokens=self._estimate_tokens()
-        )
+        pressure = self._session.check_pressure(usage_tokens=self._estimate_tokens())
         if pressure == Pressure.NONE:
             return StreamEvent(action="buffered", compressed=False, pressure=pressure)
 
@@ -122,9 +120,7 @@ class MemoSiftStream:
 
         compressed, report = await self._session.compress(self._messages)
         self._messages = list(compressed)
-        pressure = self._session.check_pressure(
-            usage_tokens=self._estimate_tokens()
-        )
+        pressure = self._session.check_pressure(usage_tokens=self._estimate_tokens())
         return StreamEvent(
             action="compressed",
             compressed=True,

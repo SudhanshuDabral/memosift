@@ -185,12 +185,14 @@ def adapt_out(messages: list[MemoSiftMessage]) -> list[dict[str, Any]]:
         # Add tool calls.
         if msg.tool_calls:
             for tc in msg.tool_calls:
-                parts.append({
-                    "type": "tool-call",
-                    "toolCallId": tc.id,
-                    "toolName": tc.function.name,
-                    "args": _try_parse_json(tc.function.arguments),
-                })
+                parts.append(
+                    {
+                        "type": "tool-call",
+                        "toolCallId": tc.id,
+                        "toolName": tc.function.name,
+                        "args": _try_parse_json(tc.function.arguments),
+                    }
+                )
 
         result.append({"role": msg.role, "content": parts})
 

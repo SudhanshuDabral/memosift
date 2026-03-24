@@ -57,14 +57,66 @@ _SUPERSESSION_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 # Stop words for keyword extraction.
-_STOP_WORDS: frozenset[str] = frozenset({
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "can", "not", "no", "if", "then", "else",
-    "this", "that", "these", "those", "it", "its", "we", "you", "they",
-    "use", "using", "used", "going", "think", "want", "need", "like",
-})
+_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "can",
+        "not",
+        "no",
+        "if",
+        "then",
+        "else",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "we",
+        "you",
+        "they",
+        "use",
+        "using",
+        "used",
+        "going",
+        "think",
+        "want",
+        "need",
+        "like",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -110,9 +162,7 @@ class ResolutionReport:
             "arcs_resolved": self.resolved_count,
             "arcs_unresolved": self.unresolved_count,
             "supersessions_detected": len(self.supersessions),
-            "supersession_reasons": dict(
-                _count_by(s.reason for s in self.supersessions)
-            ),
+            "supersession_reasons": dict(_count_by(s.reason for s in self.supersessions)),
         }
 
 
@@ -181,13 +231,15 @@ def detect_resolution_arcs(
         if arc_resolution is not None:
             topic = topic | _extract_keywords(segments[arc_resolution].content)
 
-        report.arcs.append(ResolutionArc(
-            question_index=q_idx,
-            deliberation_indices=tuple(arc_deliberations),
-            resolution_index=arc_resolution,
-            resolved=resolved,
-            topic_keywords=frozenset(topic),
-        ))
+        report.arcs.append(
+            ResolutionArc(
+                question_index=q_idx,
+                deliberation_indices=tuple(arc_deliberations),
+                resolution_index=arc_resolution,
+                resolved=resolved,
+                topic_keywords=frozenset(topic),
+            )
+        )
 
     # Step 3: Detect supersessions (corrections, status updates).
     for i, seg in enumerate(segments):
@@ -208,12 +260,14 @@ def detect_resolution_arcs(
             shared = i_entities & j_entities
             if len(shared) >= 1:
                 reason = _classify_supersession(seg.content)
-                report.supersessions.append(SupersessionSignal(
-                    superseded_index=j,
-                    superseding_index=i,
-                    reason=reason,
-                    shared_entities=frozenset(shared),
-                ))
+                report.supersessions.append(
+                    SupersessionSignal(
+                        superseded_index=j,
+                        superseding_index=i,
+                        reason=reason,
+                        shared_entities=frozenset(shared),
+                    )
+                )
                 break  # One supersession per message.
 
     return report
