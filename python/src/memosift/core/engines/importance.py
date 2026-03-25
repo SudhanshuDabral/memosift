@@ -44,9 +44,17 @@ _NUMERICAL_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\b\d{3,}\b"),  # 3+ digit numbers (ports, line numbers)
 ]
 
-# Combined patterns for single-pass matching (2 regex calls instead of 14).
+# Combined patterns for single-pass matching.
 _ENTITY_COMBINED = re.compile("|".join(p.pattern for p in _ENTITY_PATTERNS))
 _NUMERICAL_COMBINED = re.compile("|".join(p.pattern for p in _NUMERICAL_PATTERNS), re.IGNORECASE)
+
+# Domain metric pattern: numbers likely to be KPIs (ratio units, precision, non-generic).
+# Matches: "1,992.32 Mcf/d", "2,573 psig", "126 mg/dL", "12,500 req/s"
+# Does NOT match: "line 47", "3 items", "v2.1.0" (those are generic numericals above).
+_DOMAIN_METRIC_RE = re.compile(
+    r"\b\d[\d,]*(?:\.\d+)?\s+(?:[A-Za-z]+/[A-Za-z]+|[A-Z][a-z]*[A-Z])",  # ratio units or CamelCase
+    re.IGNORECASE,
+)
 
 # Discourse markers: questions, conclusions, decisions.
 _QUESTION_PATTERN = re.compile(r"\?\s*$", re.MULTILINE)
@@ -192,9 +200,16 @@ def score_importance(
         entity_count = len(_ENTITY_COMBINED.findall(text))
         entity_density = min(entity_count / token_count, 1.0)
 
-        # Signal 2: Numerical density (weight: 0.10)
-        num_count = len(_NUMERICAL_COMBINED.findall(text))
-        numerical_density = min(num_count / token_count, 1.0)
+        # Signal 2a: Generic numerical density (weight: 0.05)
+        # Line numbers, ports, version numbers, error codes.
+        generic_num_count = len(_NUMERICAL_COMBINED.findall(text))
+        generic_numerical = min(generic_num_count / token_count, 1.0)
+
+        # Signal 2b: Domain metric density (weight: 0.10)
+        # Numbers with units (ratio patterns like X/Y, comma-separated, non-common words).
+        # Uses the contextual metric heuristic — numbers likely to be KPIs.
+        domain_metric_count = len(_DOMAIN_METRIC_RE.findall(text))
+        domain_numerical = min(domain_metric_count / token_count, 1.0)
 
         # Signal 3: Discourse markers (weight: 0.15)
         has_question = bool(_QUESTION_PATTERN.search(text))
@@ -202,24 +217,35 @@ def score_importance(
         has_decision = bool(_DECISION_MARKERS.search(text))
         discourse_score = 1.0 if (has_question or has_conclusion or has_decision) else 0.0
 
-        # Signal 4: Instruction detection — graduated (weight: 0.15)
+        # Signal 4: Instruction detection -- graduated (weight: 0.15)
         instruction_strength = _compute_instruction_strength(text, seg.role)
 
         # Signal 5: Position weight (weight: 0.15)
         distance_from_end = total_segments - 1 - i
         position_weight = 1.0 / (1.0 + distance_from_end * 0.1)
 
-        # Signal 6: TF-IDF importance (weight: 0.15)
+        # Signal 6: TF-IDF importance (weight: 0.10)
         tfidf_importance = _mean_tfidf_score(text, corpus_idf)
 
-        # Combined importance (BudgetMem-aligned weights + instruction).
+        # Signal 7: Anchor fact coverage (weight: 0.10)
+        # What fraction of this message's content overlaps with anchor ledger facts.
+        anchor_coverage = 0.0
+        if ledger is not None:
+            critical = ledger.get_critical_strings()
+            if critical:
+                covered = sum(1 for s in critical if s.lower() in text.lower())
+                anchor_coverage = min(covered / max(len(critical), 1), 1.0)
+
+        # Combined importance (7 signals).
         importance = (
             entity_density * 0.15
-            + numerical_density * 0.10
+            + generic_numerical * 0.05
+            + domain_numerical * 0.10
             + discourse_score * 0.15
             + instruction_strength * 0.15
             + position_weight * 0.15
-            + tfidf_importance * 0.15
+            + tfidf_importance * 0.10
+            + anchor_coverage * 0.10
         )
 
         # Absolute override: hard constraints always PRESERVE.

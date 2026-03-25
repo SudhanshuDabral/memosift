@@ -20,17 +20,27 @@ const JS_METHOD_RE =
 const PY_CLASS_RE = /^(\s*class\s+\w+(?:\(.*?\))?)\s*:/gm;
 const PY_FUNC_RE = /^(\s*(?:async\s+)?def\s+\w+\s*\(.*?\)(?:\s*->\s*.+)?)\s*:/gm;
 
+/** Optional project memory providing protection strings for JSON truncation. */
+export interface ProjectMemory {
+  getProtectionStrings(): ReadonlySet<string>;
+}
+
 export function structuralCompress(
   segments: ClassifiedMessage[],
   config: MemoSiftConfig,
   ledger?: AnchorLedger | null,
+  projectMemory?: ProjectMemory | null,
 ): ClassifiedMessage[] {
+  // Collect protected strings from project memory if available.
+  const protectedStrings: ReadonlySet<string> =
+    projectMemory?.getProtectionStrings() ?? new Set<string>();
+
   return segments.map((seg) => {
     if (!TARGET_POLICIES.has(seg.policy)) return seg;
 
     let newContent: string;
     if (seg.contentType === ContentType.TOOL_RESULT_JSON) {
-      newContent = compressJson(seg.message.content, config.jsonArrayThreshold);
+      newContent = compressJson(seg.message.content, config.jsonArrayThreshold, protectedStrings);
     } else if (seg.contentType === ContentType.CODE_BLOCK) {
       newContent = compressCode(seg.message.content, config.codeKeepSignatures);
     } else {
@@ -52,8 +62,16 @@ export function structuralCompress(
   });
 }
 
-function compressJson(text: string, arrayThreshold: number): string {
+function compressJson(
+  text: string,
+  arrayThreshold: number,
+  protectedStrings: ReadonlySet<string>,
+): string {
   try {
+    // If the text contains a protected string, skip truncation entirely.
+    for (const ps of protectedStrings) {
+      if (text.includes(ps)) return text;
+    }
     const data: unknown = JSON.parse(text.trim());
     return JSON.stringify(truncateJsonValue(data, arrayThreshold), null, 2);
   } catch {
@@ -72,14 +90,23 @@ function truncateJsonValue(value: unknown, threshold: number): unknown {
 
       const remaining = value.length - 2;
       if (remaining > 0) {
+        const result: unknown[] = [...exemplars];
         if (schema) {
           const keysStr = schema.join(", ");
-          return [
-            ...exemplars,
+          result.push(
             `... ${remaining} more items with same schema ({${keysStr}}) (total: ${value.length})`,
-          ];
+          );
+        } else {
+          result.push(`... and ${remaining} more items (total: ${value.length})`);
         }
-        return [...exemplars, `... and ${remaining} more items (total: ${value.length})`];
+
+        // Compute numeric range statistics for truncated items.
+        const stats = computeNumericRanges(value.slice(2), schema);
+        if (Object.keys(stats).length > 0) {
+          result.push({ _stats: stats });
+        }
+
+        return result;
       }
       return exemplars;
     }
@@ -93,6 +120,54 @@ function truncateJsonValue(value: unknown, threshold: number): unknown {
     return result;
   }
   return value;
+}
+
+/**
+ * Compute numeric range statistics (min, max, mean, count) for truncated array items.
+ *
+ * If items are schema-uniform objects, computes per-key stats for numeric fields.
+ * If items are plain numbers, computes stats under the `_values` key.
+ */
+function computeNumericRanges(
+  items: unknown[],
+  schema: string[] | null,
+): Record<string, { min: number; max: number; mean: number; count: number }> {
+  if (items.length === 0) return {};
+
+  if (schema && items.every((item) => typeof item === "object" && item !== null)) {
+    const stats: Record<string, { min: number; max: number; mean: number; count: number }> = {};
+    for (const key of schema) {
+      const values = items
+        .filter((item) => typeof (item as Record<string, unknown>)[key] === "number")
+        .map((item) => (item as Record<string, unknown>)[key] as number);
+      if (values.length > 0) {
+        stats[key] = {
+          min: Math.min(...values),
+          max: Math.max(...values),
+          mean:
+            Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10000) / 10000,
+          count: values.length,
+        };
+      }
+    }
+    return stats;
+  }
+
+  const numericValues = items.filter((v): v is number => typeof v === "number");
+  if (numericValues.length > 0) {
+    return {
+      _values: {
+        min: Math.min(...numericValues),
+        max: Math.max(...numericValues),
+        mean:
+          Math.round(
+            (numericValues.reduce((a, b) => a + b, 0) / numericValues.length) * 10000,
+          ) / 10000,
+        count: numericValues.length,
+      },
+    };
+  }
+  return {};
 }
 
 /**

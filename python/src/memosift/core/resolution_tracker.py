@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING
+
+from memosift.core.types import CompressionPolicy
 
 if TYPE_CHECKING:
     from memosift.core.types import ClassifiedMessage
@@ -271,6 +274,51 @@ def detect_resolution_arcs(
                 break  # One supersession per message.
 
     return report
+
+
+def apply_resolution_compression(
+    segments: list[ClassifiedMessage],
+    report: ResolutionReport,
+) -> list[ClassifiedMessage]:
+    """Apply compression policy changes based on detected resolution arcs.
+
+    For resolved arcs: deliberation messages get AGGRESSIVE policy, the
+    resolution itself gets its shield elevated. For superseded messages:
+    the superseded message gets AGGRESSIVE policy.
+
+    This function is opt-in, gated by ``config.enable_resolution_compression``.
+
+    Args:
+        segments: Classified messages from the pipeline.
+        report: Resolution report from ``detect_resolution_arcs()``.
+
+    Returns:
+        Segments with updated compression policies.
+    """
+    result = list(segments)
+
+    # Collect indices to mark as AGGRESSIVE.
+    aggressive_indices: set[int] = set()
+
+    # Resolved arcs: deliberation messages become AGGRESSIVE.
+    for arc in report.arcs:
+        if arc.resolved:
+            for d_idx in arc.deliberation_indices:
+                if d_idx < len(result):
+                    aggressive_indices.add(d_idx)
+
+    # Superseded messages become AGGRESSIVE.
+    for sup in report.supersessions:
+        if sup.superseded_index < len(result):
+            aggressive_indices.add(sup.superseded_index)
+
+    # Apply changes.
+    for idx in aggressive_indices:
+        seg = result[idx]
+        if seg.policy not in {CompressionPolicy.PRESERVE, CompressionPolicy.LIGHT}:
+            result[idx] = dc_replace(seg, policy=CompressionPolicy.AGGRESSIVE)
+
+    return result
 
 
 def _matches_any(text: str, patterns: list[re.Pattern[str]]) -> bool:

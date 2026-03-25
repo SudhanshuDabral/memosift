@@ -191,6 +191,11 @@ export enum AnchorCategory {
   IDENTIFIERS = "IDENTIFIERS",
   OUTCOMES = "OUTCOMES",
   OPEN_ITEMS = "OPEN_ITEMS",
+  PARAMETERS = "PARAMETERS",
+  CONSTRAINTS = "CONSTRAINTS",
+  ASSUMPTIONS = "ASSUMPTIONS",
+  DATA_SCHEMA = "DATA_SCHEMA",
+  RELATIONSHIPS = "RELATIONSHIPS",
 }
 
 const LEDGER_SECTION_HEADERS: Record<string, string> = {
@@ -202,6 +207,11 @@ const LEDGER_SECTION_HEADERS: Record<string, string> = {
   [AnchorCategory.IDENTIFIERS]: "## IDENTIFIERS",
   [AnchorCategory.OUTCOMES]: "## OUTCOMES",
   [AnchorCategory.OPEN_ITEMS]: "## OPEN ITEMS",
+  [AnchorCategory.PARAMETERS]: "## PARAMETERS",
+  [AnchorCategory.CONSTRAINTS]: "## CONSTRAINTS",
+  [AnchorCategory.ASSUMPTIONS]: "## ASSUMPTIONS",
+  [AnchorCategory.DATA_SCHEMA]: "## DATA SCHEMA",
+  [AnchorCategory.RELATIONSHIPS]: "## RELATIONSHIPS",
 };
 
 const LEDGER_PRIMARY_SECTIONS: AnchorCategory[] = [
@@ -371,6 +381,29 @@ export class AnchorLedger {
     return Math.floor(this.render().length / 4);
   }
 
+  workingMemorySummary(): string {
+    const warmCategories = [
+      AnchorCategory.OUTCOMES,
+      AnchorCategory.DECISIONS,
+      AnchorCategory.PARAMETERS,
+      AnchorCategory.CONSTRAINTS,
+      AnchorCategory.RELATIONSHIPS,
+    ];
+    const lines: string[] = [];
+    for (const category of warmCategories) {
+      const categoryFacts = this.facts.filter((f) => f.category === category);
+      if (categoryFacts.length > 0) {
+        const header = LEDGER_SECTION_HEADERS[category] ?? `## ${category}`;
+        lines.push(header);
+        for (const fact of categoryFacts.slice(0, 10)) {
+          lines.push(`- ${fact.content}`);
+        }
+      }
+    }
+    if (lines.length === 0) return "";
+    return "[WORKING MEMORY]\n" + lines.join("\n");
+  }
+
   factsByCategory(category: AnchorCategory): AnchorFact[] {
     return this.facts.filter((f) => f.category === category);
   }
@@ -405,4 +438,23 @@ export class AnchorLedger {
     }
     return ledger;
   }
+}
+
+// ── CrossWindowState persistence ─────────────────────────────────────────────
+
+export function saveCrossWindowState(state: CrossWindowState, path: string): void {
+  const data = { contentHashes: [...state.contentHashes].sort() };
+  writeFileSync(path, JSON.stringify(data), "utf-8");
+}
+
+export function loadCrossWindowState(path: string): CrossWindowState {
+  if (!existsSync(path)) return createCrossWindowState();
+  const data = JSON.parse(readFileSync(path, "utf-8"));
+  return { contentHashes: new Set(data.contentHashes ?? []) };
+}
+
+// ── ClassifiedMessage content helper ─────────────────────────────────────────
+
+export function getContent(seg: ClassifiedMessage): string {
+  return seg.message.content || "";
 }

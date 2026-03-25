@@ -5,7 +5,7 @@
 // to gather data on whether semantic detection would improve compression quality,
 // without risking regressions from false positives.
 
-import type { ClassifiedMessage } from "./types.js";
+import { CompressionPolicy, type ClassifiedMessage } from "./types.js";
 
 // Question detection patterns.
 const QUESTION_PATTERNS = [
@@ -277,4 +277,37 @@ function classifySupersession(text: string): string {
     return "status_update";
   }
   return "refinement";
+}
+
+/** Apply compression policy changes based on detected resolution arcs.
+ * For resolved arcs: deliberation messages get AGGRESSIVE policy.
+ * For superseded messages: get AGGRESSIVE policy.
+ * Opt-in, gated by config.enableResolutionCompression. */
+export function applyResolutionCompression(
+  segments: ClassifiedMessage[],
+  report: ResolutionReport,
+): ClassifiedMessage[] {
+  const result = [...segments];
+  const aggressiveIndices = new Set<number>();
+
+  for (const arc of report.arcs) {
+    if (arc.resolved) {
+      for (const dIdx of arc.deliberationIndices) {
+        if (dIdx < result.length) aggressiveIndices.add(dIdx);
+      }
+    }
+  }
+  for (const sup of report.supersessions) {
+    if (sup.supersededIndex < result.length) {
+      aggressiveIndices.add(sup.supersededIndex);
+    }
+  }
+
+  for (const idx of aggressiveIndices) {
+    const seg = result[idx]!;
+    if (seg.policy !== CompressionPolicy.PRESERVE && seg.policy !== CompressionPolicy.LIGHT) {
+      result[idx] = { ...seg, policy: CompressionPolicy.AGGRESSIVE };
+    }
+  }
+  return result;
 }

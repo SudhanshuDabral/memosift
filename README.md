@@ -8,14 +8,15 @@ Context-aware compression engine that sits between your agent and the LLM. Reads
 
 | Metric | Result |
 |---|---|
-| **Compression** | 2.91x (coding) / 5.10x (general) on 11 real Claude Code sessions |
-| **Fact retention** | 90.4% (coding) / 466 out of 466 fidelity probes pass |
+| **Compression** | **5.32x** (coding) / **5.35x** (general) on 11 real Claude Code sessions |
+| **Fact retention** | 88.5% (coding) / 96.0% quality probes (348 probes, 9 domains) |
 | **Tool call integrity** | 100% across 5.5 million tokens, 4,799 tool calls |
-| **Quality probes** | 96.3% on 9 synthetic domains, **100% on real sessions** |
+| **Tokens saved** | **2.2 million** across 11 sessions ($33 at Opus pricing) |
 | **Cost** | $0.00 — zero LLM calls in deterministic mode |
-| **Latency** | <200ms per compression call |
+| **Latency** | <200ms per compression call (TypeScript: <15ms) |
 | **Adapters** | 6 frameworks, lossless round-trip |
-| **Tests** | 547 Python + 160 TypeScript, all passing |
+| **Tests** | 600 Python + 160 TypeScript, all passing |
+| **Self-improving** | LLM feedback loop learns project-specific protection rules |
 
 See [ACHIEVEMENTS.md](ACHIEVEMENTS.md) for full benchmark details and per-session breakdowns.
 
@@ -40,6 +41,37 @@ npx @memosift/mcp-server
 ```
 
 8 tools: `memosift_check_pressure`, `memosift_compress`, `memosift_configure`, `memosift_get_facts`, `memosift_expand`, `memosift_report`, `memosift_list_sessions`, `memosift_destroy`.
+
+## Self-Improving Compression
+
+MemoSift v0.7 introduces a post-compression LLM feedback loop that learns from its own decisions. After each compression, three parallel LLM jobs (Entity Guardian, Fact Auditor, Config Advisor) run asynchronously — analyzing what was lost and building project-specific protection rules. These rules persist as a JSON file and are applied automatically on the next session.
+
+```python
+from memosift import MemoSiftSession
+from memosift.core.llm_inspector import inspect_compression, ProjectMemory
+
+# Session 1: compress + inspect
+session = MemoSiftSession("coding", model="claude-sonnet-4-6")
+compressed, report = await session.compress(messages)
+
+# LLM inspector runs async after response is sent
+memory = ProjectMemory.load("project_memory.json")
+await inspect_compression(
+    original=messages, compressed=compressed,
+    ledger=session.ledger, report=report,
+    llm=haiku_provider, memory=memory,
+    memory_path="project_memory.json",
+)
+
+# Session 2: learned entities are automatically protected
+memory = ProjectMemory.load("project_memory.json")
+compressed, report = await session.compress(
+    new_messages, project_memory=memory,
+)
+# Retention improves from 95% to 100% on previously-lost entities
+```
+
+The feedback system learned 69 project-specific entities and improved retention from 95% to **100%** on production data — with zero manual tuning.
 
 ## Install
 

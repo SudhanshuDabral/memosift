@@ -129,7 +129,11 @@ def _compress_elaborations(
             if ledger is not None and ledger.contains_anchor_fact(clause):
                 result.append(clause)
             else:
-                compressed = _prune_clause(clause, keep_ratio=0.2)
+                # Causal clauses with numerical evidence get a higher keep
+                # ratio to preserve the link between conclusions and data.
+                has_numerics = bool(re.search(r"\d[\d,.]+", clause))
+                ratio = 0.6 if has_numerics else 0.2
+                compressed = _prune_clause(clause, keep_ratio=ratio)
                 result.append(compressed)
         else:
             # Nucleus clause — keep intact.

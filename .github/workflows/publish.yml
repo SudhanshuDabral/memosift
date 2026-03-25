@@ -140,6 +140,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true
           # Uses trusted publishing (OIDC) — no token needed if configured.
           # Fallback: set PYPI_API_TOKEN secret in the 'pypi' environment.
           password: ${{ secrets.PYPI_API_TOKEN }}
@@ -164,7 +165,23 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Check if version already published
+        id: check-npm
+        working-directory: typescript
+        run: |
+          PKG_NAME=$(node -e "console.log(require('./package.json').name)")
+          PKG_VER=$(node -e "console.log(require('./package.json').version)")
+          if npm view "${PKG_NAME}@${PKG_VER}" version 2>/dev/null; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${PKG_NAME}@${PKG_VER} already published, skipping"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish to npm
+        if: steps.check-npm.outputs.already_published != 'true'
         working-directory: typescript
         run: npm publish --access public
         env:
@@ -190,7 +207,23 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Check if version already published
+        id: check-mcp
+        working-directory: mcp-server
+        run: |
+          PKG_NAME=$(node -e "console.log(require('./package.json').name)")
+          PKG_VER=$(node -e "console.log(require('./package.json').version)")
+          if npm view "${PKG_NAME}@${PKG_VER}" version 2>/dev/null; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${PKG_NAME}@${PKG_VER} already published, skipping"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_MCP_TOKEN }}
+
       - name: Publish MCP server to npm
+        if: steps.check-mcp.outputs.already_published != 'true'
         working-directory: mcp-server
         run: npm publish --access public
         env:

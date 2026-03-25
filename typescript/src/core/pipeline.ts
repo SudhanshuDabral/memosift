@@ -6,7 +6,14 @@ import { createConfig } from "../config.js";
 import type { MemoSiftLLMProvider } from "../providers/base.js";
 import { HeuristicTokenCounter } from "../providers/heuristic.js";
 import { CompressionReport } from "../report.js";
+import { detectAgenticPatterns as _detectAgenticPatterns } from "./agentic-patterns.js";
 import { extractAnchorsFromSegments, extractReasoningChains } from "./anchor-extractor.js";
+import { autoTune as _autoTune } from "./auto-tuner.js";
+import {
+  applyResolutionCompression as _applyResolutionCompression,
+  detectResolutionArcs as _detectResolutionArcs,
+  toSignals as _toSignals,
+} from "./resolution-tracker.js";
 import { enforceBudget } from "./budget.js";
 import { classifyMessages } from "./classifier.js";
 import { coalesceShortMessages } from "./coalescer.js";
@@ -30,6 +37,7 @@ import { optimizePosition } from "./positioner.js";
 import { scoreRelevance, scoreRelevanceLlm } from "./scorer.js";
 import type { CompressionState } from "./state.js";
 import {
+  AnchorCategory,
   type AnchorLedger,
   type ClassifiedMessage,
   CompressionPolicy,
@@ -37,6 +45,7 @@ import {
   type CrossWindowState,
   type DependencyMap,
   type MemoSiftMessage,
+  createAnchorFact,
   createClassified,
   createDependencyMap,
   createMessage,
@@ -114,6 +123,7 @@ export interface CompressOptions {
   cache?: CompressionCache | null;
   contextWindow?: ContextWindowState | null;
   state?: CompressionState | null;
+  projectMemory?: { getProtectionStrings(): ReadonlySet<string>; protectedEntities?: string[]; domainPatterns?: string[] } | null;
 }
 
 export interface CompressResult {
@@ -131,7 +141,19 @@ export async function compress(
   const ledger = options?.ledger ?? null;
   const crossWindow = options?.crossWindow ?? null;
   const incrementalState = options?.state ?? null;
+  const projectMemory = options?.projectMemory ?? null;
+  const cache = options?.cache ?? null;
   const report = new CompressionReport();
+
+  // ── Level 2: Content Detection Auto-Tuning ──
+  if (config.autoTune) {
+    try {
+      const [tuned] = _autoTune(config, messages);
+      config = tuned;
+    } catch {
+      // Auto-tuner is fault-tolerant — skip on error.
+    }
+  }
   const counter: MemoSiftLLMProvider = llm ?? new HeuristicTokenCounter();
 
   // ── Incremental state ──
@@ -226,23 +248,61 @@ export async function compress(
     );
   }
 
+  // ── Inject Project Memory (learned protection strings) ──
+  if (projectMemory && ledger) {
+    if (projectMemory.protectedEntities) {
+      for (const entity of projectMemory.protectedEntities) {
+        ledger.add(createAnchorFact(AnchorCategory.IDENTIFIERS, `Learned: ${entity}`, 0, 0.95));
+      }
+    }
+    if (projectMemory.domainPatterns && projectMemory.domainPatterns.length > 0) {
+      const merged = [...config.metricPatterns];
+      for (const p of projectMemory.domainPatterns) {
+        if (!merged.includes(p)) merged.push(p);
+      }
+      config = { ...config, metricPatterns: merged };
+    }
+  }
+
   // ── Anchor Extraction (before compression, after classification) ──
   if (ledger && config.enableAnchorLedger) {
     extractAnchorsFromSegments(segments, ledger);
   }
 
-  // ── Resolution Tracking (audit-only — does NOT modify compression) ──
+  // ── Resolution Tracking ──
   try {
-    const { detectResolutionArcs, toSignals } = await import("./resolution-tracker.js");
-    const resReport = detectResolutionArcs(segments);
-    report.resolutionSignals = toSignals(resReport) as unknown as Record<string, unknown>;
+    const resReport = _detectResolutionArcs(segments);
+    report.resolutionSignals = _toSignals(resReport) as unknown as Record<string, unknown>;
+    if (config.enableResolutionCompression) {
+      segments = _applyResolutionCompression(segments, resReport);
+    }
   } catch {
-    // Resolution tracking is optional — skip if module unavailable.
+    // Resolution tracking is fault-tolerant — skip on error.
   }
 
   // ── Reasoning Chain Tracking (after anchor extraction) ──
   const deps: DependencyMap = createDependencyMap();
   extractReasoningChains(segments, deps);
+
+  // ── Layer 1.5: Agentic Pattern Detection ──
+  {
+    const start = performance.now();
+    try {
+      const detected = _detectAgenticPatterns(segments, config, ledger);
+      if (detected) segments = detected;
+      report.layers.push({
+        name: "agentic_patterns",
+        inputTokens: 0,
+        outputTokens: 0,
+        tokensRemoved: 0,
+        latencyMs: performance.now() - start,
+        llmCallsMade: 0,
+        llmTokensConsumed: 0,
+      });
+    } catch {
+      // Agentic patterns layer is fault-tolerant — skip on error.
+    }
+  }
 
   for (const seg of segments) {
     const key = seg.contentType;

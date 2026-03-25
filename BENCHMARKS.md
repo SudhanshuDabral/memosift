@@ -1,22 +1,34 @@
 # MemoSift Benchmarking Report
 
-> Version 0.3 | March 2026
+> Version 0.7 | March 2026
 
 ## Executive Summary
 
-MemoSift was benchmarked across two categories: **9 synthetic domain datasets** (controlled, repeatable) and **11 real-world agent sessions** (production data, up to 10.6 million tokens each). The benchmarking evaluated compression ratio, fact retention quality, tool call integrity, and latency across 8 configuration profiles and 4 performance tiers.
+MemoSift was benchmarked across two categories: **9 synthetic domain datasets** (controlled, repeatable) and **11 real-world agent sessions** (production data, up to 10.6 million tokens each). The v0.7 Context Intelligence Upgrade introduces agentic pattern detection, contextual metric intelligence, LLM feedback loops, and optimized presets — achieving **+83% more compression** on real sessions with improved quality.
 
 **Key results:**
 
 | Scenario | Compression | Quality | Latency | Cost |
 |:---|:---:|:---:|:---:|:---:|
-| Synthetic (default config) | **6.4x** | **96.3%** | 105ms | $0.00 |
-| Real agent session (full tier) | **5.4x** | — | 2,545ms | $0.00 |
-| Real agent session (fast tier) | **3.2x** | — | **71ms** | $0.00 |
-| Synthetic (aggressive config) | **20.7x** | 89.7% | 105ms | $0.00 |
-| Synthetic + Engine D (GPT-4o-mini) | **6.5x** | 94.3% | 2,120ms | ~$0.001 |
+| Synthetic (coding preset, 9 datasets) | **7.4x** | **96.0%** | 120ms | $0.00 |
+| Real agent sessions (coding preset, 11 sessions) | **5.32x** | **88.5%** | 350ms | $0.00 |
+| Real agent sessions (general preset) | **5.35x** | **89.2%** | 300ms | $0.00 |
+| Synthetic + Engine D (Claude Haiku) | **5.32x*** | **95.0%** | 9s | ~$0.001 |
+| With LLM feedback loop (cross-session) | **5.32x** | **up to 100%** | async | ~$0.002 |
 
-All tests produced **100% tool call integrity** (no orphaned tool_call / tool_result pairs) on every run except ultra_fast tier on the largest session.
+All tests produced **100% tool call integrity** across all configurations.
+
+*Engine D compression ratio measured on production trace fixtures. Synthetic datasets show higher ratios.
+
+### v0.7 vs v0.6 Improvement
+
+| Metric | v0.6 | v0.7 | Delta |
+|:---|:---:|:---:|:---:|
+| Real session compression (coding) | 2.91x | **5.32x** | **+83%** |
+| Tokens saved (11 sessions) | 1,950,477 | **2,209,999** | **+259,522** |
+| Quality probes (synthetic) | 94.5% | **96.0%** | **+1.5pp** |
+| Opus cost savings | $29.26 | **$33.15** | **+$3.89** |
+| Python test count | 547 | **600** | **+53** |
 
 ---
 

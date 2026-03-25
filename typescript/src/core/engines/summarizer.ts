@@ -6,7 +6,14 @@ import { type ClassifiedMessage, CompressionPolicy, createMessage } from "../typ
 
 const TARGET_POLICIES = new Set([CompressionPolicy.AGGRESSIVE]);
 
-const SUMMARIZE_PROMPT = `Summarize the following conversation segment concisely.
+const SUMMARIZE_PROMPT = `Compress the following conversation segment into a structured summary.
+
+Output format:
+FACTS:
+- <each critical fact on its own line>
+
+SUMMARY:
+<1-3 sentence narrative connecting the facts>
 
 PRESERVE exactly (do not paraphrase):
 - All file paths (e.g., src/auth.ts, ./config/db.json)
@@ -14,7 +21,7 @@ PRESERVE exactly (do not paraphrase):
 - All error messages and types (e.g., TypeError: Cannot read...)
 - All decisions and their rationale (e.g., "chose X because Y")
 - All unresolved issues or open items
-- All specific numeric values (ports, status codes, counts)
+- All specific numeric values (ports, status codes, counts, metrics)
 - All function/class/variable names
 
 REMOVE:
@@ -23,24 +30,25 @@ REMOVE:
 - Intermediate reasoning that led to a stated conclusion
 - Tool invocation metadata (tool names, call IDs)
 
-Output a concise summary preserving all critical facts.
-
 SEGMENT:
 {content}`;
 
 const FILE_PATH_RE = /(?:[\w.\-]+[/\\])+[\w.\-]+\.\w{1,10}(?::\d+)?/g;
 const ERROR_MSG_RE =
   /(?:TypeError|ReferenceError|SyntaxError|ValueError|KeyError|AttributeError|ImportError|RuntimeError|Error):\s*.{10,100}/g;
+const NUMERIC_VALUE_RE = /\b\d[\d,.]*\b/g;
 
 interface CriticalFacts {
   filePaths: Set<string>;
   errorMsgs: Set<string>;
+  numericValues: Set<string>;
 }
 
 function extractCriticalFacts(text: string): CriticalFacts {
   return {
     filePaths: new Set(text.match(FILE_PATH_RE) ?? []),
     errorMsgs: new Set(text.match(ERROR_MSG_RE) ?? []),
+    numericValues: new Set(text.match(NUMERIC_VALUE_RE) ?? []),
   };
 }
 
@@ -55,6 +63,17 @@ function isValidSummary(summary: string, original: string, facts: CriticalFacts)
   for (const error of facts.errorMsgs) {
     const errorType = error.split(":")[0]?.trim() ?? "";
     if (errorType && !summary.includes(errorType)) return false;
+  }
+
+  // Brevity bias check: reject summaries that lose >30% of numerical values.
+  if (facts.numericValues.size > 0) {
+    const summaryNumerics = new Set(summary.match(NUMERIC_VALUE_RE) ?? []);
+    let retained = 0;
+    for (const num of facts.numericValues) {
+      if (summaryNumerics.has(num)) retained++;
+    }
+    const retentionRatio = retained / facts.numericValues.size;
+    if (retentionRatio < 0.7) return false;
   }
 
   return true;

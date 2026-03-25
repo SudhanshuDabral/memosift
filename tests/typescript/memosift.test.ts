@@ -224,15 +224,16 @@ describe("createConfig", () => {
 });
 
 describe("createPreset", () => {
-  it("creates coding preset with higher entropy threshold", () => {
+  it("creates optimized coding preset", () => {
     const config = createPreset("coding");
-    expect(config.recentTurns).toBe(3);
-    expect(config.entropyThreshold).toBe(2.5);
+    expect(config.recentTurns).toBe(2);
+    expect(config.entropyThreshold).toBe(2.1);
     expect(config.codeKeepSignatures).toBe(true);
+    expect(config.enableResolutionCompression).toBe(true);
   });
 
-  it("creates all 5 presets without error", () => {
-    for (const name of ["coding", "research", "support", "data", "general"]) {
+  it("creates all presets without error", () => {
+    for (const name of ["coding", "research", "support", "data", "energy", "financial", "general", "auto"]) {
       expect(() => createPreset(name)).not.toThrow();
     }
   });
@@ -244,7 +245,7 @@ describe("createPreset", () => {
   it("allows overrides on top of presets", () => {
     const config = createPreset("coding", { tokenBudget: 80_000 });
     expect(config.tokenBudget).toBe(80_000);
-    expect(config.recentTurns).toBe(3); // from preset
+    expect(config.recentTurns).toBe(2); // from optimized coding preset
   });
 });
 

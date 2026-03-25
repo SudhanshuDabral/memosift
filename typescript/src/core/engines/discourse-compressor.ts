@@ -126,7 +126,10 @@ function compressElaborations(text: string, ledger: AnchorLedger | null): string
       if (ledger?.containsAnchorFact(clause)) {
         result.push(clause);
       } else {
-        const compressed = pruneClause(clause, 0.2);
+        // Use higher keep ratio for clauses containing numeric data to preserve values.
+        const hasNumeric = /\d[\d,.]+/.test(clause);
+        const keepRatio = hasNumeric ? 0.6 : 0.2;
+        const compressed = pruneClause(clause, keepRatio);
         result.push(compressed);
       }
     } else {

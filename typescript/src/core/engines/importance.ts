@@ -1,4 +1,4 @@
-// Layer 3G: Multi-signal importance scoring (BudgetMem-inspired, 6 signals).
+// Layer 3G: Multi-signal importance scoring (BudgetMem-inspired, 8 signals).
 
 import type { MemoSiftConfig } from "../../config.js";
 import {
@@ -38,6 +38,9 @@ const NUMERICAL_PATTERNS: readonly RegExp[] = [
   /\b(?:0x[0-9a-f]+|E\d{4,})\b/gi, // Error codes
   /\b\d{3,}\b/g, // 3+ digit numbers (ports, line numbers)
 ];
+
+// Domain metric patterns: numbers followed by units with slashes or camelCase units.
+const DOMAIN_METRIC_RE = /\b\d[\d,]*(?:\.\d+)?\s+(?:[A-Za-z]+\/[A-Za-z]+|[A-Z][a-z]*[A-Z])/gi;
 
 // Combined patterns for single-pass matching (2 regex calls instead of 14).
 const _ENTITY_COMBINED = new RegExp(ENTITY_PATTERNS.map((p) => p.source).join("|"), "g");
@@ -210,15 +213,65 @@ function meanTfidfScore(text: string, corpusIdf: ReadonlyMap<string, number>): n
 }
 
 /**
- * Score each segment's importance using 6 signals and assign shield levels.
+ * Compute what fraction of the segment's entities appear in the anchor ledger.
+ *
+ * Returns 0.0 if no ledger or no entities; 1.0 if all entities are covered.
+ */
+function computeAnchorCoverage(text: string, ledger: AnchorLedger | null): number {
+  if (!ledger || !text) return 0.0;
+
+  const protectedStrings = ledger.getProtectedStrings();
+  if (protectedStrings.size === 0) return 0.0;
+
+  // Extract entities from text.
+  const entities = new Set<string>();
+
+  // File paths.
+  const filePathPattern = /(?:[A-Za-z]:)?[\w.\-]+(?:[/\\][\w.\-]+)+/g;
+  for (const match of text.matchAll(filePathPattern)) {
+    entities.add(match[0]);
+  }
+
+  // Code identifiers (camelCase).
+  const camelCasePattern = /\b[a-z]+(?:[A-Z][a-z]+)+\b/g;
+  for (const match of text.matchAll(camelCasePattern)) {
+    entities.add(match[0]);
+  }
+
+  // Code identifiers (snake_case).
+  const snakeCasePattern = /\b[a-z]+(?:_[a-z]+)+\b/g;
+  for (const match of text.matchAll(snakeCasePattern)) {
+    entities.add(match[0]);
+  }
+
+  if (entities.size === 0) return 0.0;
+
+  let covered = 0;
+  for (const entity of entities) {
+    for (const p of protectedStrings) {
+      if (p.includes(entity) || entity.includes(p)) {
+        covered++;
+        break;
+      }
+    }
+  }
+  return covered / entities.size;
+}
+
+/**
+ * Score each segment's importance using 8 signals and assign shield levels.
  *
  * Signals (aligned with BudgetMem's validated feature set + instruction detection):
- * 1. Entity density (file paths, IDs, code names per token)
- * 2. Numerical density (line numbers, ports, counts per token)
- * 3. Discourse markers (questions, conclusions, decisions)
- * 4. Instruction detection (graduated: absolute > imperative > conditional > hedged)
- * 5. Position weight (recency bias -- closer to end = more important)
- * 6. TF-IDF importance (mean TF-IDF score of segment tokens)
+ * 1.  Entity density (file paths, IDs, code names per token) — weight 0.15
+ * 2a. Generic numerical density (line numbers, ports, counts per token) — weight 0.05
+ * 2b. Domain metric density (numbers with units like req/s, MiB) — weight 0.10
+ * 3.  Discourse markers (questions, conclusions, decisions) — weight 0.15
+ * 4.  Instruction detection (graduated: absolute > imperative > conditional > hedged) — weight 0.15
+ * 5.  Position weight (recency bias -- closer to end = more important) — weight 0.15
+ * 6.  TF-IDF importance (mean TF-IDF score of segment tokens) — weight 0.10
+ * 7.  Anchor fact coverage (fraction of segment entities in anchor ledger) — weight 0.10
+ *
+ * Total weight: ~0.95 (with anchor coverage contributing to fidelity preservation).
  *
  * Shield assignment:
  * - importance > 0.7 -> PRESERVE
@@ -227,7 +280,7 @@ function meanTfidfScore(text: string, corpusIdf: ReadonlyMap<string, number>): n
  *
  * @param segments - Classified messages from previous layers.
  * @param config - Pipeline configuration.
- * @param ledger - Optional anchor ledger (not directly used -- entities extracted inline).
+ * @param ledger - Optional anchor ledger for anchor fact coverage signal.
  * @returns Segments with importanceScore and shield populated.
  */
 export function scoreImportance(
@@ -271,9 +324,13 @@ export function scoreImportance(
     const entityCount = countMatches(_ENTITY_COMBINED, text);
     const entityDensity = Math.min(entityCount / tokenCount, 1.0);
 
-    // Signal 2: Numerical density (weight: 0.10) — single combined regex.
+    // Signal 2a: Generic numerical density (weight: 0.05) — single combined regex.
     const numCount = countMatches(_NUMERICAL_COMBINED, text);
-    const numericalDensity = Math.min(numCount / tokenCount, 1.0);
+    const genericNumericalDensity = Math.min(numCount / tokenCount, 1.0);
+
+    // Signal 2b: Domain metric density (weight: 0.10) — numbers with units.
+    const domainMetricCount = countMatches(DOMAIN_METRIC_RE, text);
+    const domainMetricDensity = Math.min(domainMetricCount / tokenCount, 1.0);
 
     // Signal 3: Discourse markers (weight: 0.15)
     const hasQuestion = QUESTION_PATTERN.test(text);
@@ -288,17 +345,22 @@ export function scoreImportance(
     const distanceFromEnd = totalSegments - 1 - i;
     const positionWeight = 1.0 / (1.0 + distanceFromEnd * 0.1);
 
-    // Signal 6: TF-IDF importance (weight: 0.15)
+    // Signal 6: TF-IDF importance (weight: 0.10)
     const tfidfImportance = meanTfidfScore(text, corpusIdf);
 
-    // Combined importance (BudgetMem-aligned weights + instruction).
+    // Signal 7: Anchor fact coverage (weight: 0.10)
+    const anchorCoverage = computeAnchorCoverage(text, ledger ?? null);
+
+    // Combined importance (BudgetMem-aligned weights + instruction + anchor coverage).
     let importance =
       entityDensity * 0.15 +
-      numericalDensity * 0.1 +
+      genericNumericalDensity * 0.05 +
+      domainMetricDensity * 0.1 +
       discourseScore * 0.15 +
       instructionStrength * 0.15 +
       positionWeight * 0.15 +
-      tfidfImportance * 0.15;
+      tfidfImportance * 0.1 +
+      anchorCoverage * 0.1;
 
     // Absolute override: hard constraints always PRESERVE.
     if (instructionStrength >= 0.7) {

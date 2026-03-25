@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-25
+
+### Added
+
+- **Context Intelligence Engine** — MemoSift evolves from a compression utility into an adaptive context intelligence engine. 15 improvements across 5 phases, +83% compression improvement on real production data.
+
+- **Agentic Pattern Detector (Layer 1.5)** — new pipeline layer that detects 5 waste patterns specific to AI agent conversations: duplicate tool calls (collapsed to back-references), failed+retried tool calls (marked for compression), large code arguments (truncated to signatures), thought process blocks (reclassified as ASSISTANT_REASONING), and KPI restatement (marked for pruning). Runs after classification, before deduplication.
+
+- **Contextual Metric Intelligence** — domain-agnostic heuristic that detects significant numerical metrics without hardcoded unit lists. 6 contextual signals: ratio-unit patterns (catches Mcf/d, mg/dL, req/s), high precision numbers, non-common context words (~200 word negative filter), comparison context, table cell detection, JSON key context. Configurable via `metricPatterns` for domain-specific overrides.
+
+- **LLM Inspector** — post-compression quality feedback via 3 parallel LLM jobs (Entity Guardian, Fact Auditor, Config Advisor). Runs AFTER compression, asynchronously, not in the hot path. Produces `ProjectMemory` — persistent, project-specific protection rules that the deterministic engines read on the next session.
+
+- **Content Detection Auto-Tuner** — analyzes incoming message content (code density, error density, JSON structure, numeric data, tool call patterns) and auto-selects optimal compression parameters. Replaces static preset guessing with data-driven configuration. Available via `MemoSiftConfig(autoTune=True)` or `preset("auto")`.
+
+- **Working Memory Categories** — 5 new `AnchorCategory` values: PARAMETERS, CONSTRAINTS, ASSUMPTIONS, DATA_SCHEMA, RELATIONSHIPS. Each with regex extraction patterns for structured domain knowledge capture.
+
+- **Entity Extraction Improvements** — ALL-CAPS multi-word entities (well names, operator names), single ALL-CAPS words with common-abbreviation filter, large comma-separated numbers. Catches "WHITLEY-DUBOSE UNIT 1H", "EOG", "95,467" as anchor facts.
+
+- **New presets**: `energy` (oil & gas with 19 metric patterns), `financial` (7 financial metric patterns), `auto` (content-detection auto-tuning)
+
+- **Cross-session dedup persistence** — `CrossWindowState.saveToFile()` / `loadFromFile()` for multi-session dedup hash reuse
+
+- **Compression Feedback module** — ACON-style failure reporting via `CompressionFeedback.reportMissing()`. Accumulates protection patterns from reported losses.
+
+- **Tiered Memory Architecture** — Hot (Anchor Ledger), Warm (Working Memory Summary via `ledger.workingMemorySummary()`), Cold (CompressionCache for on-demand re-expansion)
+
+- 53 new Python tests (25 metric intelligence + 17 agentic patterns + 11 production benchmarks)
+- Production trace fixtures from 3 real debug sessions (144 messages, 139 critical facts)
+- Real-LLM benchmark scripts (`engine_d_benchmark.py`, `feedback_loop_benchmark.py`, `feedback_loop_traces.py`)
+- Full TypeScript parity for all new features (4 new modules + 12 updated files)
+
+### Changed
+
+- **`coding` preset optimized** — leverages anchor ledger + resolution tracker as safety nets for more aggressive compression. `recentTurns`: 3->2, `entropyThreshold`: 2.5->2.1, `tokenPruneKeepRatio`: 0.7->0.55, `dedupSimilarityThreshold`: 0.90->0.85, `ERROR_TRACE` policy: PRESERVE->STACK, `enableResolutionCompression`: true. Result: +83% more compression with <2pp retention cost.
+- **Resolution Tracker graduated** from audit-only to compression-affecting (gated by `enableResolutionCompression` config flag). Resolved deliberation arcs and superseded messages get AGGRESSIVE compression policy.
+- **Engine D prompt redesigned** — structured FACTS + SUMMARY output format with brevity bias prevention (rejects summaries losing >30% of numerical values)
+- **Observation masking threshold** made adaptive based on segment count (<100: 8, 100-500: 12, 500+: 15)
+- **Observation masking** now preserves ALL file paths found in content (not just first match)
+- **Importance scoring** split from 6 to 7 signals: generic numerical density (0.05 weight) vs domain metric density (0.10 weight), plus anchor fact coverage (0.10 weight)
+- **Discourse compressor** uses keep_ratio=0.6 for causal clauses containing numerical evidence (was 0.2)
+- **Relevance pruner** query expansion now includes high-value IDENTIFIERS (Metric:, Amount:, ID:)
+- **JSON array truncation** now appends `_stats` dict with min/max/mean/count for numeric fields
+- **Engine C** re-enabled protected strings from ProjectMemory (targeted, not broad anchor ledger)
+- `ClassifiedMessage.content` returns `""` instead of `None` for null content (fixes NoneType layer errors)
+- Version bumped to 0.7.0 (Python + TypeScript)
+
+### Performance
+
+- **5.32x** avg compression on 11 real Claude Code sessions (was 2.91x — **+83% improvement**)
+- **2.2M tokens saved** across 11 sessions ($33.15 at Opus pricing — was $29.26)
+- **96.0% quality probes** on 9 synthetic datasets (was 94.5% — **+1.5pp**)
+- **100% tool call integrity** maintained across all configurations
+- TypeScript benchmarks: **5.5x** avg on synthetics, **95.4%** quality probes, **93% parity** with Python
+
 ## [0.6.0] - 2026-03-24
 
 ### Added

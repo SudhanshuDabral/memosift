@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from memosift.config import MemoSiftConfig
+from memosift.core.agentic_patterns import detect_agentic_patterns
 from memosift.core.anchor_extractor import (
     extract_anchors_from_segments,
     extract_anchors_llm,
     extract_reasoning_chains,
 )
+from memosift.core.auto_tuner import auto_tune as _auto_tune_config
 from memosift.core.budget import enforce_budget
 from memosift.core.classifier import classify_messages
 from memosift.core.coalescer import coalesce_short_messages
@@ -119,6 +121,7 @@ async def compress(
     cache: CompressionCache | None = None,
     context_window: ContextWindowState | None = None,
     state: CompressionState | None = None,
+    project_memory: object | None = None,
 ) -> tuple[list[MemoSiftMessage], CompressionReport]:
     """Compress a list of messages through the 6-layer pipeline.
 
@@ -146,6 +149,9 @@ async def compress(
             results, and token counts across calls. The Three-Zone model already
             skips Zone 2 (previously compressed) — state additionally caches
             per-layer artifacts so Zone 3 processing is faster.
+        project_memory: Optional ProjectMemory with learned protection rules.
+            When provided, entities and patterns from previous LLM inspector
+            feedback are injected into the anchor ledger as high-confidence facts.
 
     Returns:
         A tuple of (compressed_messages, compression_report).
@@ -159,6 +165,26 @@ async def compress(
     # ── Incremental state ──
     if state is not None:
         state.bump_sequence()
+
+    # ── Level 2: Content Detection Auto-Tuning ──
+    # When auto_tune is enabled, analyze message content and adapt config
+    # BEFORE Layer 0 runs. Layer 0 then applies pressure-based adaptation
+    # on top of the auto-tuned config.
+    if config.auto_tune:
+        config, auto_result = _auto_tune_config(config, messages)
+        report.add_decision(
+            layer="auto_tune",
+            action="tuned",
+            message_index=-1,
+            original_tokens=0,
+            result_tokens=0,
+            reason=(
+                f"style={auto_result.detected_style}, "
+                f"tuned={list(auto_result.tuned_params.keys())}, "
+                f"locked={list(auto_result.locked_params)[:5]}, "
+                f"domains={auto_result.profile.detected_domains}"
+            ),
+        )
 
     # ── Layer 0: Context-Aware Adaptive Thresholds ──
     # Resolve context window state from: explicit param > config field > model_name.
@@ -244,6 +270,31 @@ async def compress(
     # Fix original_index to reference position in full message list.
     _fix_original_indices(segments, messages, zone3)
 
+    # ── Inject Project Memory (learned protection strings) ──
+    # If project memory is provided, inject its learned entities and patterns
+    # into the anchor ledger BEFORE anchor extraction runs. This ensures
+    # previously-lost entities are protected from the start.
+    if project_memory is not None and ledger is not None:
+        if hasattr(project_memory, "protected_entities"):
+            from memosift.core.types import AnchorCategory, AnchorFact
+
+            for entity in project_memory.protected_entities:
+                ledger.add(AnchorFact(
+                    category=AnchorCategory.IDENTIFIERS,
+                    content=f"Learned: {entity}",
+                    turn=0,
+                    confidence=0.95,
+                ))
+        if hasattr(project_memory, "domain_patterns") and project_memory.domain_patterns:
+            # Merge learned domain patterns into config metric_patterns.
+            from dataclasses import replace as _dc_replace
+
+            merged = list(config.metric_patterns)
+            for p in project_memory.domain_patterns:
+                if p not in merged:
+                    merged.append(p)
+            config = _dc_replace(config, metric_patterns=merged)
+
     # ── Anchor Extraction (before compression, after classification) ──
     # Always run regex extraction first (fast, deterministic, captures file
     # paths, errors, line refs, identifiers).  When an LLM is provided,
@@ -251,18 +302,25 @@ async def compress(
     # causal relationships that regex misses.  The two are additive — the
     # ledger deduplicates by content hash.
     if ledger is not None and config.enable_anchor_ledger:
-        extract_anchors_from_segments(segments, ledger)
+        extract_anchors_from_segments(segments, ledger, metric_patterns=config.metric_patterns)
         if llm is not None:
             await extract_anchors_llm(segments, ledger, llm)
 
-    # ── Resolution Tracking (audit-only — does NOT modify compression) ──
-    # Detect question→decision arcs and supersession patterns for observability.
-    # Results are logged to the report; compression behavior is unaffected.
+    # ── Resolution Tracking ──
+    # Detect question->decision arcs and supersession patterns.
+    # When enable_resolution_compression is True, also applies compression
+    # policy changes to resolved deliberation arcs and superseded messages.
     try:
-        from memosift.core.resolution_tracker import detect_resolution_arcs
+        from memosift.core.resolution_tracker import (
+            apply_resolution_compression,
+            detect_resolution_arcs,
+        )
 
         resolution_report = detect_resolution_arcs(segments)
         report.resolution_signals = resolution_report.to_dict()
+
+        if config.enable_resolution_compression:
+            segments = apply_resolution_compression(segments, resolution_report)
     except Exception as e:
         logger.debug("Resolution tracking skipped: %s", e)
 
@@ -271,6 +329,20 @@ async def compress(
     # record them in the DependencyMap for safety during aggressive pruning.
     deps = DependencyMap()
     extract_reasoning_chains(segments, deps)
+
+    # ── Layer 1.5: Agentic Pattern Detection ──
+    # Detects duplicate tool calls, failed retries, large code args,
+    # thought process blocks, and KPI restatements. Annotates segments
+    # with policy/content_type changes for downstream layers.
+    segments = (
+        await _run_layer(
+            "agentic_patterns",
+            lambda segs: _async_wrap(detect_agentic_patterns(segs, config, ledger)),
+            segments,
+            report,
+        )
+        or segments
+    )
 
     # Record segment counts.
     for seg in segments:
@@ -316,14 +388,27 @@ async def compress(
     # Pass ledger to engines so they protect content containing anchor facts.
     # Track content hashes for first-read vs re-read detection (Item 2.2).
     seen_content_hashes: dict[str, int] = {}
-    # Enable observation masking only for conversations with enough tool results
-    # that old ones are truly stale (>= 10 tool results in the compress bucket).
+    # Enable observation masking for conversations with enough tool results
+    # that old ones are truly stale. Threshold is ADAPTIVE based on total
+    # segment count to avoid over-masking in large sessions:
+    #   - Small sessions (<100 segments): threshold = 8
+    #   - Medium sessions (100-500):      threshold = 12
+    #   - Large sessions (>500):          threshold = 15
+    # This prevents aggressive masking from stripping secondary file paths
+    # in tool-heavy sessions while still benefiting shorter conversations.
     _tool_result_count = sum(
         1
         for s in segments
         if s.content_type in {ContentType.TOOL_RESULT_TEXT, ContentType.TOOL_RESULT_JSON}
     )
-    _enable_obs_masking = _tool_result_count >= 10 or (
+    _total_segments = len(segments)
+    if _total_segments > 500:
+        _obs_threshold = 15
+    elif _total_segments > 100:
+        _obs_threshold = 12
+    else:
+        _obs_threshold = 8
+    _enable_obs_masking = _tool_result_count >= _obs_threshold or (
         adaptive is not None and adaptive.enable_observation_masking
     )
 
@@ -342,6 +427,7 @@ async def compress(
                         ledger=ledger,
                         seen_content_hashes=seen_content_hashes,
                         enable_observation_masking=_enable_obs_masking,
+                        cache=cache,
                     )
                 ),
                 segments,
@@ -365,7 +451,9 @@ async def compress(
         segments = (
             await _run_layer(
                 "engine_structural",
-                lambda segs: _async_wrap(structural_compress(segs, config, ledger=ledger)),
+                lambda segs: _async_wrap(
+                    structural_compress(segs, config, ledger=ledger, project_memory=project_memory)
+                ),
                 segments,
                 report,
             )

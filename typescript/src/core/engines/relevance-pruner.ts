@@ -231,7 +231,7 @@ function extractRecentUserQueries(segments: ClassifiedMessage[], n: number): str
   return queries;
 }
 
-/** Build expanded query from user queries + anchor ledger ACTIVE_CONTEXT and ERRORS. */
+/** Build expanded query from user queries + anchor ledger ACTIVE_CONTEXT, ERRORS, and high-value IDENTIFIERS. */
 function buildExpandedQuery(queries: string[], ledger: AnchorLedger | null): string {
   const parts = [...queries];
   if (ledger != null) {
@@ -240,6 +240,14 @@ function buildExpandedQuery(queries: string[], ledger: AnchorLedger | null): str
     }
     for (const fact of ledger.factsByCategory(AnchorCategory.ERRORS)) {
       parts.push(fact.content);
+    }
+
+    // Add high-value identifiers for query expansion.
+    const highValuePrefixes = ["Metric:", "Amount:", "ID:"];
+    for (const fact of ledger.factsByCategory(AnchorCategory.IDENTIFIERS)) {
+      if (highValuePrefixes.some((p) => fact.content.startsWith(p))) {
+        parts.push(fact.content);
+      }
     }
   }
   return parts.join(" ");

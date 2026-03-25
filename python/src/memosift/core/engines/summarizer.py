@@ -22,24 +22,27 @@ logger = logging.getLogger("memosift")
 # since those are often the biggest token consumers.
 _TARGET_POLICIES = {CompressionPolicy.AGGRESSIVE, CompressionPolicy.MODERATE}
 
-SUMMARIZE_PROMPT = """Summarize the following conversation segment concisely.
+SUMMARIZE_PROMPT = """Produce a structured compression of the following conversation segment.
 
-PRESERVE exactly (do not paraphrase):
-- All file paths (e.g., src/auth.ts, ./config/db.json)
-- All line numbers (e.g., line 47, auth.ts:47)
-- All error messages and types (e.g., TypeError: Cannot read...)
-- All decisions and their rationale (e.g., "chose X because Y")
-- All unresolved issues or open items
-- All specific numeric values (ports, status codes, counts)
-- All function/class/variable names
+OUTPUT FORMAT (both sections required):
 
-REMOVE:
-- Conversational filler ("sure", "let me", "I'll", "okay")
-- Redundant restatements of the same information
-- Intermediate reasoning that led to a stated conclusion
-- Tool invocation metadata (tool names, call IDs)
+FACTS:
+- List every numerical value with its unit and context (e.g., "Gas Rate: 1,992 Mcf/d = North avg")
+- List every file path exactly as written
+- List every error message verbatim
+- List every decision with its reasoning
+- List every entity name (wells, operators, projects, people)
+- List every parameter, threshold, or constraint mentioned
 
-Output a concise summary preserving all critical facts.
+SUMMARY:
+2-3 sentences capturing the flow of reasoning and conclusions. Do NOT restate
+the facts above -- just describe what happened and what was decided.
+
+RULES:
+- FACTS section: preserve exact values, never round or paraphrase numbers
+- SUMMARY section: be concise, focus on the "what" and "why"
+- REMOVE: conversational filler, redundant restatements, intermediate reasoning
+- REMOVE: tool invocation metadata (tool names, call IDs, execution details)
 
 SEGMENT:
 {content}"""
@@ -156,8 +159,9 @@ def _is_valid_summary(
     A valid summary must:
     1. Be non-trivial (> 20 chars)
     2. Be shorter than the original
-    3. Preserve all file paths from the original
+    3. Preserve all file paths from the original (allow 30% loss)
     4. Preserve all error messages from the original
+    5. Preserve >= 70% of numerical values from the original (brevity bias check)
     """
     # Length checks.
     if len(summary) <= 20:
@@ -185,6 +189,21 @@ def _is_valid_summary(
         error_type = error.split(":")[0].strip()
         if error_type not in summary:
             logger.debug("Summary missing error type: %s", error_type)
+            return False
+
+    # Brevity bias check: verify >= 70% of numerical values are preserved.
+    # This prevents summarization from over-compressing data-rich segments.
+    original_numbers = set(re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", original))
+    if len(original_numbers) >= 3:
+        preserved = sum(1 for n in original_numbers if n in summary)
+        retention = preserved / len(original_numbers)
+        if retention < 0.7:
+            logger.debug(
+                "Summary brevity bias: only %d/%d numbers preserved (%.0f%%)",
+                preserved,
+                len(original_numbers),
+                retention * 100,
+            )
             return False
 
     return True

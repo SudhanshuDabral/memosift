@@ -38,9 +38,20 @@ class TestJsonCompression:
         data = {"users": [{"id": i, "name": f"User{i}"} for i in range(50)]}
         result = _compress_json(json.dumps(data), 5)
         parsed = json.loads(result)
-        # Array should be truncated to 2 exemplars + annotation.
-        assert len(parsed["users"]) == 3
-        assert "50" in str(parsed["users"][-1])
+        # Array should be truncated to 2 exemplars + annotation + optional _stats.
+        users = parsed["users"]
+        assert len(users) in (3, 4)  # 3 without stats, 4 with _stats dict
+        # Summary annotation contains the total count.
+        annotation = [u for u in users if isinstance(u, str)]
+        assert any("50" in a for a in annotation)
+        # Stats dict should be present for numeric fields (id is numeric).
+        stats_entries = [u for u in users if isinstance(u, dict) and "_stats" in u]
+        assert len(stats_entries) == 1
+        stats = stats_entries[0]["_stats"]
+        assert "id" in stats
+        assert stats["id"]["min"] == 2
+        assert stats["id"]["max"] == 49
+        assert stats["id"]["count"] == 48
 
     def test_json_scalar_values_preserved(self) -> None:
         data = {"name": "Alice", "age": 30, "active": True}

@@ -25,25 +25,35 @@ def structural_compress(
     segments: list[ClassifiedMessage],
     config: MemoSiftConfig,
     ledger: AnchorLedger | None = None,
+    *,
+    project_memory: object | None = None,
 ) -> list[ClassifiedMessage]:
     """Apply structural compression to code and JSON segments.
 
     For code: Extract function/class signatures, collapse bodies.
     For JSON: Truncate large arrays, preserve scalar values.
-    Anchor ledger facts are preserved in truncated arrays and code bodies.
+
+    When ``project_memory`` is provided, its learned entities are used as
+    protected strings — JSON array items containing these strings survive
+    truncation. This is more targeted than using the full anchor ledger
+    (which would kill compression ratios).
 
     Args:
         segments: Classified messages from previous layers.
         config: Pipeline configuration.
-        ledger: Optional anchor ledger — facts in truncated content are preserved.
+        ledger: Optional anchor ledger (not used for protection gating).
+        project_memory: Optional ProjectMemory with learned entities to protect.
 
     Returns:
         Segments with structural compression applied.
     """
-    # Engine-level ledger gating disabled — JSON truncation should compress
-    # aggressively. The Anchor Ledger already captures critical facts before
-    # compression; protecting them again here kills compression ratios.
+    # Use project memory entities as protected strings during JSON truncation.
+    # These are entities the LLM inspector identified as lost in previous sessions.
+    # Using learned entities is targeted — unlike the full anchor ledger which is
+    # too broad and kills compression ratios.
     protected_strings: frozenset[str] = frozenset()
+    if project_memory is not None and hasattr(project_memory, "get_protection_strings"):
+        protected_strings = project_memory.get_protection_strings()
     result: list[ClassifiedMessage] = []
     for seg in segments:
         if seg.policy not in _TARGET_POLICIES:
@@ -126,6 +136,8 @@ def _truncate_json_value(
             remaining = len(value) - 2 - len(protected_items)
             result = exemplars + protected_items
             if remaining > 0:
+                # Compute statistical summary for numeric fields in truncated items.
+                stats = _compute_numeric_ranges(value[2:], schema)
                 if schema:
                     keys_str = ", ".join(schema)
                     result.append(
@@ -134,11 +146,63 @@ def _truncate_json_value(
                     )
                 else:
                     result.append(f"... and {remaining} more items (total: {len(value)})")
+                if stats:
+                    result.append({"_stats": stats})
             return result
         return [_truncate_json_value(v, threshold, protected_strings) for v in value]
     if isinstance(value, dict):
         return {k: _truncate_json_value(v, threshold, protected_strings) for k, v in value.items()}
     return value
+
+
+def _compute_numeric_ranges(
+    items: list[object],
+    schema: list[str] | None,
+) -> dict[str, dict[str, float]]:
+    """Compute min/max/mean for numeric fields across truncated array items.
+
+    For schema-uniform dict arrays, reports ranges per numeric key.
+    For flat numeric arrays, reports aggregate ranges.
+
+    Returns a dict of ``{field_name: {min, max, mean, count}}``, empty if
+    no numeric data is found.
+    """
+    if not items:
+        return {}
+
+    # Case 1: Array of dicts with a known schema — compute per-key stats.
+    if schema and all(isinstance(item, dict) for item in items):
+        stats: dict[str, dict[str, float]] = {}
+        for key in schema:
+            values = [
+                item[key]  # type: ignore[index]
+                for item in items
+                if isinstance(item, dict)
+                and key in item
+                and isinstance(item[key], (int, float))
+            ]
+            if values:
+                stats[key] = {
+                    "min": min(values),
+                    "max": max(values),
+                    "mean": round(sum(values) / len(values), 4),
+                    "count": len(values),
+                }
+        return stats
+
+    # Case 2: Flat numeric array — compute aggregate stats.
+    numeric_values = [v for v in items if isinstance(v, (int, float))]
+    if numeric_values:
+        return {
+            "_values": {
+                "min": min(numeric_values),
+                "max": max(numeric_values),
+                "mean": round(sum(numeric_values) / len(numeric_values), 4),
+                "count": len(numeric_values),
+            }
+        }
+
+    return {}
 
 
 def _detect_array_schema(items: list[object]) -> list[str] | None:

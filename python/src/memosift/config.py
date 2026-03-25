@@ -129,6 +129,24 @@ class MemoSiftConfig:
     segments directly past compression layers. Reduces N for all engines."""
 
     # ── Context-aware adaptive compression ──
+    enable_resolution_compression: bool = False
+    """When True, resolution tracker modifies compression policies for resolved
+    deliberation arcs and superseded messages. Disabled by default for safety."""
+
+    auto_tune: bool = False
+    """When True, auto-detect optimal parameters from message content instead
+    of using static preset values. Runs once per compress() call (before Layer 0).
+    Explicit parameter overrides are respected -- auto-tuning only fills in
+    parameters the caller did not set. Enable via ``MemoSiftConfig(auto_tune=True)``
+    or ``MemoSiftConfig.preset("auto")``."""
+
+    metric_patterns: list[str] = field(default_factory=list)
+    """Domain-specific metric unit patterns for anchor extraction.
+    Numbers followed by any of these strings are always extracted as anchor facts
+    with high confidence (0.9), bypassing the heuristic threshold.
+    Example: ``["Mcf/d", "psig", "bbl/d"]`` for energy domain.
+    Presets populate this automatically; merge with ``metric_patterns=["custom"]``."""
+
     context_window: ContextWindowState | None = None
     """Context window state for adaptive compression (Layer 0).
     When provided, the pipeline dynamically adjusts ``recent_turns``,
@@ -141,15 +159,25 @@ class MemoSiftConfig:
         """Create a config from a named domain preset.
 
         Available presets:
-        - ``"coding"`` — Conservative compression for coding agents. Never loses
-          file paths, line numbers, error messages. Keeps code signatures.
+        - ``"coding"`` — Optimized compression for coding agents. Leverages
+          anchor ledger + resolution tracker as safety nets for aggressive
+          compression without quality loss. Keeps code signatures, uses
+          STACK for error traces (anchor ledger preserves error type+message).
         - ``"research"`` — Moderate compression for research/analysis agents.
           Aggressive JSON truncation, preserves citations and URLs.
         - ``"support"`` — Aggressive compression for customer support agents.
           Keeps recent conversation, summarizes old context heavily.
         - ``"data"`` — Balanced compression for data analysis agents.
           Preserves numeric values, column names, query results.
+        - ``"energy"`` — Optimized for oil & gas / energy domain agents.
+          Includes metric patterns for Mcf/d, bbl/d, psig, GOR, EUR, etc.
+        - ``"financial"`` — Optimized for financial analysis agents.
+          Includes metric patterns for bps, AUM, NAV, EPS, EBITDA.
         - ``"general"`` — Default balanced compression for any agent type.
+        - ``"auto"`` — Auto-detect optimal parameters from message content.
+          No preset guessing needed — the system analyzes code density, error
+          patterns, JSON structure, numeric data, and tool call patterns to
+          choose the best settings automatically.
 
         Args:
             name: Preset name.
@@ -160,16 +188,17 @@ class MemoSiftConfig:
         """
         presets: dict[str, dict[str, Any]] = {
             "coding": {
-                "recent_turns": 3,
-                "entropy_threshold": 2.5,
-                "token_prune_keep_ratio": 0.7,
+                "recent_turns": 2,
+                "entropy_threshold": 2.1,
+                "token_prune_keep_ratio": 0.55,
                 "code_keep_signatures": True,
-                "dedup_similarity_threshold": 0.90,
-                "relevance_drop_threshold": 0.03,
-                "json_array_threshold": 3,
+                "dedup_similarity_threshold": 0.85,
+                "relevance_drop_threshold": 0.05,
+                "json_array_threshold": 5,
                 "enable_anchor_ledger": True,
+                "enable_resolution_compression": True,
                 "policies": {
-                    ContentType.ERROR_TRACE: CompressionPolicy.PRESERVE,
+                    ContentType.ERROR_TRACE: CompressionPolicy.STACK,
                     ContentType.CODE_BLOCK: CompressionPolicy.SIGNATURE,
                 },
             },
@@ -203,6 +232,32 @@ class MemoSiftConfig:
                 "dedup_similarity_threshold": 0.85,
                 "relevance_drop_threshold": 0.05,
                 "enable_anchor_ledger": True,
+                "metric_patterns": ["QPS", "RPS", "p99", "p95", "p50"],
+            },
+            "energy": {
+                "recent_turns": 3,
+                "entropy_threshold": 2.0,
+                "token_prune_keep_ratio": 0.6,
+                "code_keep_signatures": False,
+                "json_array_threshold": 10,
+                "dedup_similarity_threshold": 0.85,
+                "relevance_drop_threshold": 0.05,
+                "enable_anchor_ledger": True,
+                "metric_patterns": [
+                    "Mcf/d", "bbl/d", "STB/d", "psig", "psia", "bbl", "STB",
+                    "Mcf", "MMcf", "BOE", "BOPD", "Scf/STB", "STB/MMcf",
+                    "GOR", "WOR", "GLR", "WGR", "EUR", "API",
+                ],
+            },
+            "financial": {
+                "recent_turns": 2,
+                "entropy_threshold": 1.8,
+                "token_prune_keep_ratio": 0.5,
+                "json_array_threshold": 5,
+                "dedup_similarity_threshold": 0.80,
+                "relevance_drop_threshold": 0.05,
+                "enable_anchor_ledger": True,
+                "metric_patterns": ["bps", "AUM", "NAV", "EPS", "EBITDA", "YoY", "QoQ"],
             },
             "general": {
                 "recent_turns": 2,
@@ -210,6 +265,10 @@ class MemoSiftConfig:
                 "token_prune_keep_ratio": 0.5,
                 "dedup_similarity_threshold": 0.80,
                 "relevance_drop_threshold": 0.05,
+                "enable_anchor_ledger": True,
+            },
+            "auto": {
+                "auto_tune": True,
                 "enable_anchor_ledger": True,
             },
         }

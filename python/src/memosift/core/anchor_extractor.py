@@ -124,11 +124,219 @@ _PERCENT_PATTERN = re.compile(r"\b\d+(?:\.\d+)?%")
 # Proper noun / person name pattern — capitalized words after lowercase context.
 _PROPER_NOUN_PATTERN = re.compile(r"(?<=[a-z]\s)([A-Z][a-z]{2,15})\b")
 
+# ALL-CAPS entity names — well names, operator names, project codes.
+# Matches multi-word: "WHITLEY-DUBOSE UNIT 1H", "CRESCENT ENERGY"
+_ALLCAPS_ENTITY_PATTERN = re.compile(
+    r"\b([A-Z][A-Z\s\-]{3,}(?:\d+[A-Z]?\b)?)\b"
+)
+
+# Single ALL-CAPS words (3+ chars) that are likely entity names, not common abbrevs.
+# Catches: "EOG", "FESCO", "INEOS" but skips: "THE", "AND", "FOR"
+_SINGLE_CAPS_ENTITY_RE = re.compile(r"\b([A-Z]{3,15})\b")
+_COMMON_ABBREVIATIONS: frozenset[str] = frozenset({
+    "THE", "AND", "FOR", "NOT", "BUT", "ARE", "WAS", "HAS", "HAD", "CAN",
+    "ALL", "ANY", "FEW", "NEW", "OLD", "USE", "GET", "SET", "RUN", "ADD",
+    "API", "URL", "SQL", "CSS", "HTML", "JSON", "HTTP", "HTTPS", "REST",
+    "PDF", "CSV", "XML", "SDK", "CLI", "GUI", "IDE", "GIT", "NPM", "PIP",
+    "AWS", "GCP", "CPU", "GPU", "RAM", "SSD", "HDD", "USB", "LAN", "WAN",
+    "TRUE", "FALSE", "NULL", "NONE", "PASS", "FAIL", "TODO", "NOTE",
+    "SYSTEM", "USER", "TOOL", "ERROR", "TRACE", "DEBUG", "INFO", "WARN",
+})
+
 # Domain-specific term pattern — medical/scientific terms (long, specific words).
 _DOMAIN_TERM_PATTERN = re.compile(
     r"\b([a-z]{8,}(?:ide|ine|ase|ose|ate|ism|itis|emia|opathy|amine|mycin|cillin|prazole|sartan|statin))\b",
     re.IGNORECASE,
 )
+
+# ── Contextual Metric Intelligence ─────────────────────────────────────────
+#
+# Domain-agnostic heuristic detection of significant numerical metrics.
+# Uses 6 contextual signals instead of hardcoded unit lists.
+
+# Number followed by one or more non-whitespace "context" words.
+_NUMBER_IN_CONTEXT = re.compile(
+    r"(?<!\w)"
+    r"(?P<number>\d[\d,]*(?:\.\d+)?)"
+    r"\s+"
+    r"(?P<context>[A-Za-z°µ/][A-Za-z0-9°µ/]{0,15}(?:\s+[A-Za-z]{1,8})?)",
+)
+
+# Comparison phrases — numbers appearing in these contexts are likely KPIs.
+_COMPARISON_CONTEXT = re.compile(
+    r"(?:\bvs\.?\b|\bversus\b|\bcompared to\b|\bfrom\b.{1,20}\bto\b"
+    r"|\bincreased by\b|\bdecreased by\b|\bdropped\b|\brose\b|\bfell\b"
+    r"|\bhigher\b|\blower\b|\badvantage\b|\bdelta\b)",
+    re.IGNORECASE,
+)
+
+# Markdown table cell — numbers in tables are almost always KPIs.
+_TABLE_CELL = re.compile(r"\|[^|]*$|^[^|]*\|", re.MULTILINE)
+
+# Expanded common English words — if the word after a number IS in this set,
+# it's likely NOT a unit. ~200 words covering common nouns, adjectives, verbs.
+# Intentionally excludes any word that could be a measurement unit.
+_COMMON_WORDS: frozenset[str] = frozenset({
+    # Articles, prepositions, conjunctions
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of",
+    "with", "by", "from", "as", "into", "through", "during", "before", "after",
+    "above", "below", "between", "under", "over", "up", "down", "out", "off",
+    # Pronouns & determiners
+    "is", "are", "was", "were", "be", "been", "have", "has", "had", "do", "does",
+    "did", "will", "would", "could", "should", "may", "might", "shall", "can",
+    "this", "that", "it", "its", "i", "me", "my", "we", "you", "he", "she",
+    "they", "them", "their", "our", "your", "his", "her", "who", "which", "what",
+    # Common verbs
+    "get", "got", "go", "went", "come", "came", "make", "made", "take", "took",
+    "see", "saw", "know", "knew", "think", "thought", "give", "gave", "find",
+    "found", "tell", "told", "ask", "asked", "use", "used", "try", "tried",
+    "need", "needed", "want", "wanted", "run", "ran", "set", "put", "keep",
+    "kept", "let", "begin", "began", "show", "showed", "call", "called",
+    # Common adjectives
+    "new", "old", "good", "bad", "great", "small", "large", "big", "long",
+    "short", "high", "low", "right", "left", "last", "first", "next", "early",
+    "late", "full", "empty", "same", "different", "other", "more", "less",
+    "most", "least", "many", "few", "much", "each", "every", "all", "both",
+    "such", "own", "only", "just", "also", "very", "too", "quite", "really",
+    # Common nouns (things you count, NOT units)
+    "things", "items", "people", "days", "times", "ways", "years", "months",
+    "weeks", "hours", "minutes", "seconds", "points", "steps", "parts", "types",
+    "cases", "lines", "words", "pages", "rows", "columns", "fields", "files",
+    "records", "entries", "users", "results", "values", "options", "changes",
+    "issues", "errors", "tests", "tasks", "turns", "calls", "attempts",
+    "reasons", "examples", "instances", "versions", "levels", "stages",
+    # Misc high-frequency
+    "not", "no", "so", "if", "then", "than", "when", "where", "how", "why",
+    "here", "there", "now", "still", "already", "yet", "even", "well",
+    "about", "like", "some", "any", "per", "total", "main",
+    "available", "possible", "specific", "similar", "additional",
+})
+
+
+def _extract_contextual_metrics(
+    text: str,
+    config_patterns: list[str] | None = None,
+) -> list[tuple[str, float]]:
+    """Extract numbers that are likely domain metrics using contextual signals.
+
+    Uses 6 heuristic signals instead of hardcoded unit lists:
+    1. Ratio-unit pattern (X/Y: Mcf/d, mg/dL, req/s)
+    2. High precision (comma-separated or 2+ decimal places)
+    3. Non-common context word (word after number not in common English)
+    4. Comparison context (vs, compared to, increased by)
+    5. Markdown table cell
+    6. JSON metric key context
+
+    Args:
+        text: The text to extract metrics from.
+        config_patterns: Optional domain-specific unit patterns from config.
+            Numbers followed by these are always extracted (confidence 0.9).
+
+    Returns:
+        List of (matched_text, confidence_score) tuples for metrics scoring >= 0.5.
+    """
+    metrics: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    config_set = frozenset(p.lower() for p in (config_patterns or []))
+
+    for match in _NUMBER_IN_CONTEXT.finditer(text):
+        number = match.group("number")
+        context = match.group("context").strip()
+        context_first = context.split()[0] if context else ""
+        matched_text = f"{number} {context_first}".strip()
+
+        if matched_text in seen:
+            continue
+
+        # Check config patterns first — always extract if matched.
+        if config_set and context_first.lower() in config_set:
+            seen.add(matched_text)
+            metrics.append((matched_text, 0.9))
+            continue
+        # Also check multi-word config patterns (e.g., "Scf/STB").
+        if config_set and context.lower() in config_set:
+            seen.add(f"{number} {context}")
+            metrics.append((f"{number} {context}", 0.9))
+            continue
+
+        score = 0.0
+
+        # Signal 1: Ratio-unit pattern (X/Y) — strongest single signal.
+        if "/" in context_first and re.match(r"[A-Za-z]+/[A-Za-z]+", context_first):
+            score += 0.9
+
+        # Signal 2: High precision — comma-separated or 2+ decimal places.
+        if "," in number:
+            score += 0.4
+        elif "." in number and len(number.split(".")[-1]) >= 2:
+            score += 0.3
+
+        # Signal 3: Context word is NOT common English — likely a unit.
+        if context_first and context_first.lower() not in _COMMON_WORDS:
+            score += 0.5
+
+        # Signal 4: Number appears near a comparison phrase.
+        start = max(0, match.start() - 80)
+        end = min(len(text), match.end() + 80)
+        window = text[start:end]
+        if _COMPARISON_CONTEXT.search(window):
+            score += 0.3
+
+        # Signal 5: Number appears in a markdown table cell.
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.end())
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end]
+        if "|" in line:
+            score += 0.3
+
+        if score >= 0.5:
+            seen.add(matched_text)
+            metrics.append((matched_text, min(score, 1.0)))
+
+    return metrics
+
+
+# ── Working Memory Extraction Patterns ─────────────────────────────────
+
+# Parameters: numbers after threshold/limit/cap/min/max/target keywords.
+_PARAMETER_PATTERN = re.compile(
+    r"\b(?:threshold|limit|cap|minimum|maximum|min|max|target|budget|ceiling|floor|"
+    r"cutoff|baseline|benchmark|setpoint)\s*(?:of|=|:|\bis\b)?\s*"
+    r"(\d[\d,.]*(?:\.\d+)?\s*\S{0,15})",
+    re.IGNORECASE,
+)
+
+# Constraints: explicit rules the agent must follow.
+_CONSTRAINT_PATTERN = re.compile(
+    r"((?:must not|do not|don't|should not|shouldn't|cannot|can't|never|"
+    r"only if|exclude|excluding|except|avoid|restrict)\s+.{10,120}?[.!;\n])",
+    re.IGNORECASE,
+)
+
+# Assumptions: implicit conditions the agent has adopted.
+_ASSUMPTION_PATTERN = re.compile(
+    r"((?:assum(?:e|ing|ed)|by default|unless (?:specified|otherwise|stated)|"
+    r"we(?:'re| are) treating|for (?:the purposes|simplicity)|"
+    r"taken as|treated as)\s+.{10,120}?[.!;\n])",
+    re.IGNORECASE,
+)
+
+# Entity co-occurrence: extract (Subject, verb/relation, Object) triples.
+_ENTITY_COOCCURRENCE_PATTERNS = [
+    # "X has/shows/produces Y" patterns.
+    re.compile(
+        r"\b([A-Z][A-Za-z\s]{2,30}?)\s+(?:has|shows?|produces?|delivers?|maintains?|"
+        r"outperforms?|exceeds?|averages?)\s+(?:a\s+)?(.{5,60}?)(?:\.|,|;|\n)",
+        re.MULTILINE,
+    ),
+    # "X is/was Y" patterns.
+    re.compile(
+        r"\b([A-Z][A-Za-z\s]{2,30}?)\s+(?:is|was|are|were)\s+(?:the\s+)?(.{5,40}?)(?:\.|,|;|\n)",
+        re.MULTILINE,
+    ),
+]
 
 # Reasoning chain markers — indicate logical dependency on prior messages.
 _REASONING_CHAIN_PATTERN = re.compile(
@@ -143,17 +351,19 @@ def extract_anchors_from_message(
     msg: MemoSiftMessage,
     turn: int,
     tool_name: str | None = None,
+    metric_patterns: list[str] | None = None,
 ) -> list[AnchorFact]:
     """Extract anchor facts from a single message.
 
     Runs lightweight regex extractors for file paths, error messages,
-    and line references. The ``tool_name`` parameter determines whether
-    a file was "read" or "modified".
+    line references, and contextual metric intelligence. The ``tool_name``
+    parameter determines whether a file was "read" or "modified".
 
     Args:
         msg: The message to extract from.
         turn: The turn number (counted by user messages from session start).
         tool_name: The tool name from the message, if any.
+        metric_patterns: Optional domain-specific unit patterns from config.
 
     Returns:
         A list of extracted AnchorFacts.
@@ -286,6 +496,71 @@ def extract_anchors_from_message(
             )
         )
 
+    # Extract contextual metrics — domain-agnostic heuristic detection.
+    existing_metric_values = {f.content for f in facts if f.content.startswith("Metric:")}
+    for matched_text, confidence in _extract_contextual_metrics(msg.content, metric_patterns):
+        fact_content = f"Metric: {matched_text}"
+        if fact_content not in existing_metric_values:
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.IDENTIFIERS,
+                    content=fact_content,
+                    turn=turn,
+                    confidence=confidence,
+                )
+            )
+            existing_metric_values.add(fact_content)
+
+    # Extract ALL-CAPS entity names (well names, operators, project codes).
+    seen_caps: set[str] = set()
+    for match in _ALLCAPS_ENTITY_PATTERN.finditer(msg.content):
+        entity = match.group(1).strip()
+        # Filter: must have 2+ words or be at least 5 chars, skip pure whitespace.
+        words = entity.split()
+        has_multiple_words = len(words) >= 2
+        has_digits = len(entity) >= 5 and any(c.isdigit() for c in entity)
+        if (has_multiple_words or has_digits) and entity not in seen_caps and len(entity) <= 50:
+                seen_caps.add(entity)
+                facts.append(
+                    AnchorFact(
+                        category=AnchorCategory.IDENTIFIERS,
+                        content=f"Entity: {entity}",
+                        turn=turn,
+                        confidence=0.7,
+                    )
+                )
+
+    # Extract single ALL-CAPS words (3+ chars) that are likely entity names.
+    # Catches operator codes like "EOG", "INEOS", company abbrevs like "FESCO".
+    for match in _SINGLE_CAPS_ENTITY_RE.finditer(msg.content):
+        word = match.group(1)
+        if word not in _COMMON_ABBREVIATIONS and word not in seen_caps:
+            seen_caps.add(word)
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.IDENTIFIERS,
+                    content=f"Entity: {word}",
+                    turn=turn,
+                    confidence=0.6,
+                )
+            )
+
+    # Extract large comma-separated numbers (likely production/financial KPIs).
+    # Catches: 95,467 / 72,193 / 48,201 — values in data tables.
+    for match in re.finditer(r"\b(\d{1,3}(?:,\d{3})+)\b", msg.content):
+        value = match.group(1)
+        fact_content = f"Metric: {value}"
+        if fact_content not in existing_metric_values:
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.IDENTIFIERS,
+                    content=fact_content,
+                    turn=turn,
+                    confidence=0.75,
+                )
+            )
+            existing_metric_values.add(fact_content)
+
     # Extract domain-specific terms (medical, scientific).
     for match in _DOMAIN_TERM_PATTERN.finditer(msg.content):
         term = match.group(1)
@@ -296,6 +571,45 @@ def extract_anchors_from_message(
                     content=f"Term: {term}",
                     turn=turn,
                     confidence=0.7,
+                )
+            )
+
+    # Extract parameters (thresholds, limits, targets).
+    for match in _PARAMETER_PATTERN.finditer(msg.content):
+        value = match.group(1).strip().rstrip(".,;")
+        if value and len(value) >= 2:
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.PARAMETERS,
+                    content=f"Parameter: {match.group(0).strip()[:150]}",
+                    turn=turn,
+                    confidence=0.8,
+                )
+            )
+
+    # Extract constraints (explicit rules).
+    for match in _CONSTRAINT_PATTERN.finditer(msg.content):
+        constraint = match.group(1).strip()[:200]
+        if len(constraint) >= 15:
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.CONSTRAINTS,
+                    content=constraint,
+                    turn=turn,
+                    confidence=0.8,
+                )
+            )
+
+    # Extract assumptions.
+    for match in _ASSUMPTION_PATTERN.finditer(msg.content):
+        assumption = match.group(1).strip()[:200]
+        if len(assumption) >= 15:
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.ASSUMPTIONS,
+                    content=assumption,
+                    turn=turn,
+                    confidence=0.75,
                 )
             )
 
@@ -388,10 +702,35 @@ def _extract_facts_from_json_value(
             )
 
     elif isinstance(value, dict):
+        # Extract DATA_SCHEMA for top-level dicts with many keys.
+        if key is None and len(value) >= 3:
+            schema_keys = list(value.keys())[:12]
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.DATA_SCHEMA,
+                    content=f"Schema: {{{', '.join(schema_keys)}}}",
+                    turn=turn,
+                    confidence=0.7,
+                )
+            )
         for k, v in value.items():
             facts.extend(_extract_facts_from_json_value(v, k, turn, tool_name))
 
     elif isinstance(value, list):
+        # Extract DATA_SCHEMA for arrays of dicts (table-like data).
+        if (
+            len(value) >= 3
+            and all(isinstance(item, dict) for item in value[:3])
+        ):
+            sample_keys = list(value[0].keys())[:10]
+            facts.append(
+                AnchorFact(
+                    category=AnchorCategory.DATA_SCHEMA,
+                    content=f"Table[{len(value)} rows]: {{{', '.join(sample_keys)}}}",
+                    turn=turn,
+                    confidence=0.7,
+                )
+            )
         for item in value:
             facts.extend(_extract_facts_from_json_value(item, key, turn, tool_name))
 
@@ -401,6 +740,7 @@ def _extract_facts_from_json_value(
 def extract_anchors_from_segments(
     segments: list[ClassifiedMessage],
     ledger: AnchorLedger,
+    metric_patterns: list[str] | None = None,
 ) -> None:
     """Extract anchor facts from classified segments and add to the ledger.
 
@@ -558,9 +898,33 @@ def extract_anchors_from_segments(
             seg.message,
             turn=turn,
             tool_name=seg.message.name,
+            metric_patterns=metric_patterns,
         )
         for fact in facts:
             ledger.add(fact)
+
+    # ── Extract entity relationships (Phase 4.1) ──
+    # Scan assistant messages for entity co-occurrence patterns.
+    for seg in segments:
+        if seg.message.role != "assistant" or not seg.content:
+            continue
+        if seg.message._memosift_compressed:
+            continue
+        turn = _turn_for_index(seg.original_index)
+        for pattern in _ENTITY_COOCCURRENCE_PATTERNS:
+            for match in pattern.finditer(seg.content):
+                subject = match.group(1).strip()
+                predicate = match.group(2).strip()
+                if len(subject) >= 3 and len(predicate) >= 5:
+                    content = f"{subject} -> {predicate}"[:150]
+                    ledger.add(
+                        AnchorFact(
+                            category=AnchorCategory.RELATIONSHIPS,
+                            content=content,
+                            turn=turn,
+                            confidence=0.6,
+                        )
+                    )
 
 
 def extract_reasoning_chains(

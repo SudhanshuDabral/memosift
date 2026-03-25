@@ -48,3 +48,6 @@ docs/
 CLAUDE.md
 .hypothesis/
 scripts/
+
+# Marketing agent (local development tool, not part of published packages)
+marketing/

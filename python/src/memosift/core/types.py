@@ -189,8 +189,8 @@ class ClassifiedMessage:
 
     @property
     def content(self) -> str:
-        """Shortcut to the underlying message content."""
-        return self.message.content
+        """Shortcut to the underlying message content. Returns '' for None."""
+        return self.message.content or ""
 
     @content.setter
     def content(self, value: str) -> None:
@@ -263,6 +263,11 @@ class AnchorCategory(StrEnum):
     IDENTIFIERS = "IDENTIFIERS"
     OUTCOMES = "OUTCOMES"
     OPEN_ITEMS = "OPEN_ITEMS"
+    PARAMETERS = "PARAMETERS"
+    CONSTRAINTS = "CONSTRAINTS"
+    ASSUMPTIONS = "ASSUMPTIONS"
+    DATA_SCHEMA = "DATA_SCHEMA"
+    RELATIONSHIPS = "RELATIONSHIPS"
 
 
 # Section headers for the structured anchor ledger render().
@@ -275,6 +280,11 @@ _LEDGER_SECTION_HEADERS: dict[AnchorCategory, str] = {
     AnchorCategory.IDENTIFIERS: "## IDENTIFIERS",
     AnchorCategory.OUTCOMES: "## OUTCOMES",
     AnchorCategory.OPEN_ITEMS: "## OPEN ITEMS",
+    AnchorCategory.PARAMETERS: "## PARAMETERS",
+    AnchorCategory.CONSTRAINTS: "## CONSTRAINTS",
+    AnchorCategory.ASSUMPTIONS: "## ASSUMPTIONS",
+    AnchorCategory.DATA_SCHEMA: "## DATA SCHEMA",
+    AnchorCategory.RELATIONSHIPS: "## RELATIONSHIPS",
 }
 
 # Primary sections displayed first in the structured ledger.
@@ -479,6 +489,37 @@ class AnchorLedger:
                     lines.append(f"- {fact.content}")
                 lines.append("")
         return "\n".join(lines)
+
+    def working_memory_summary(self) -> str:
+        """Generate a concise working memory summary (Warm tier).
+
+        Combines OUTCOMES, DECISIONS, PARAMETERS, CONSTRAINTS, and RELATIONSHIPS
+        into a compact narrative suitable for prepending to the context window.
+        This is the deterministic fallback for tiered memory -- no LLM needed.
+
+        Returns:
+            Formatted working memory string, or empty string if no relevant facts.
+        """
+        warm_categories = (
+            AnchorCategory.OUTCOMES,
+            AnchorCategory.DECISIONS,
+            AnchorCategory.PARAMETERS,
+            AnchorCategory.CONSTRAINTS,
+            AnchorCategory.RELATIONSHIPS,
+        )
+        lines: list[str] = []
+        for category in warm_categories:
+            category_facts = [f for f in self.facts if f.category == category]
+            if category_facts:
+                header = _LEDGER_SECTION_HEADERS.get(category, f"## {category.value}")
+                lines.append(header)
+                for fact in category_facts[:10]:  # Cap per category to prevent bloat.
+                    lines.append(f"- {fact.content}")
+
+        if not lines:
+            return ""
+
+        return "[WORKING MEMORY]\n" + "\n".join(lines)
 
     def token_estimate(self) -> int:
         """Estimate token count of the rendered ledger."""

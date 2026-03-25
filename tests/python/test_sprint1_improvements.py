@@ -376,12 +376,13 @@ class TestTunedDefaults:
         config = MemoSiftConfig()
         assert config.dedup_similarity_threshold == 0.80
 
-    def test_coding_preset_stays_conservative(self) -> None:
+    def test_coding_preset_is_optimized(self) -> None:
         config = MemoSiftConfig.preset("coding")
-        assert config.recent_turns == 3
-        assert config.token_prune_keep_ratio == 0.7
-        assert config.dedup_similarity_threshold == 0.90
-        assert config.entropy_threshold == 2.5
+        assert config.recent_turns == 2
+        assert config.token_prune_keep_ratio == 0.55
+        assert config.dedup_similarity_threshold == 0.85
+        assert config.entropy_threshold == 2.1
+        assert config.enable_resolution_compression is True
 
     def test_general_preset_matches_new_defaults(self) -> None:
         config = MemoSiftConfig.preset("general")

@@ -46,10 +46,29 @@ class CrossWindowState:
     """State shared across compression windows for cross-window dedup.
 
     Pass the same instance to multiple ``deduplicate()`` calls to catch
-    duplicates that span windows.
+    duplicates that span windows. Can be serialized to/from JSON files
+    for multi-session persistence.
     """
 
     content_hashes: set[str] = field(default_factory=set)
+
+    def save_to_file(self, path: str) -> None:
+        """Serialize dedup state to a JSON file for cross-session reuse."""
+        import json as _json
+        from pathlib import Path
+
+        data = {"content_hashes": sorted(self.content_hashes)}
+        Path(path).write_text(_json.dumps(data), encoding="utf-8")
+
+    @classmethod
+    def load_from_file(cls, path: str) -> CrossWindowState:
+        """Deserialize dedup state from a JSON file."""
+        import json as _json
+        from pathlib import Path
+
+        text = Path(path).read_text(encoding="utf-8")
+        data = _json.loads(text)
+        return cls(content_hashes=set(data.get("content_hashes", [])))
 
 
 def deduplicate(

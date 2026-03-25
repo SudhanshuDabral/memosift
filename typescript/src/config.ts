@@ -46,20 +46,24 @@ export interface MemoSiftConfig {
   performanceTier: string | null;
   preBucketBypass: boolean;
   contextWindow: ContextWindowState | null;
+  enableResolutionCompression: boolean;
+  autoTune: boolean;
+  metricPatterns: string[];
 }
 
 const PRESETS: Record<string, Partial<MemoSiftConfig>> = {
   coding: {
-    recentTurns: 3,
-    entropyThreshold: 2.5,
-    tokenPruneKeepRatio: 0.7,
+    recentTurns: 2,
+    entropyThreshold: 2.1,
+    tokenPruneKeepRatio: 0.55,
     codeKeepSignatures: true,
-    dedupSimilarityThreshold: 0.9,
-    relevanceDropThreshold: 0.03,
-    jsonArrayThreshold: 3,
+    dedupSimilarityThreshold: 0.85,
+    relevanceDropThreshold: 0.05,
+    jsonArrayThreshold: 5,
     enableAnchorLedger: true,
+    enableResolutionCompression: true,
     policies: {
-      [ContentType.ERROR_TRACE]: CompressionPolicy.PRESERVE,
+      [ContentType.ERROR_TRACE]: CompressionPolicy.STACK,
       [ContentType.CODE_BLOCK]: CompressionPolicy.SIGNATURE,
     },
   },
@@ -102,6 +106,51 @@ const PRESETS: Record<string, Partial<MemoSiftConfig>> = {
     relevanceDropThreshold: 0.05,
     enableAnchorLedger: true,
   },
+  energy: {
+    recentTurns: 3,
+    entropyThreshold: 2.0,
+    tokenPruneKeepRatio: 0.6,
+    codeKeepSignatures: false,
+    jsonArrayThreshold: 10,
+    dedupSimilarityThreshold: 0.85,
+    relevanceDropThreshold: 0.05,
+    enableAnchorLedger: true,
+    metricPatterns: [
+      "Mcf/d",
+      "bbl/d",
+      "STB/d",
+      "psig",
+      "psia",
+      "bbl",
+      "STB",
+      "Mcf",
+      "MMcf",
+      "BOE",
+      "BOPD",
+      "Scf/STB",
+      "STB/MMcf",
+      "GOR",
+      "WOR",
+      "GLR",
+      "WGR",
+      "EUR",
+      "API",
+    ],
+  },
+  financial: {
+    recentTurns: 2,
+    entropyThreshold: 1.8,
+    tokenPruneKeepRatio: 0.5,
+    jsonArrayThreshold: 5,
+    dedupSimilarityThreshold: 0.8,
+    relevanceDropThreshold: 0.05,
+    enableAnchorLedger: true,
+    metricPatterns: ["bps", "AUM", "NAV", "EPS", "EBITDA", "YoY", "QoQ"],
+  },
+  auto: {
+    autoTune: true,
+    enableAnchorLedger: true,
+  },
 };
 
 export function createConfig(overrides?: Partial<MemoSiftConfig>): MemoSiftConfig {
@@ -131,6 +180,9 @@ export function createConfig(overrides?: Partial<MemoSiftConfig>): MemoSiftConfi
     performanceTier: null,
     preBucketBypass: true,
     contextWindow: null,
+    enableResolutionCompression: false,
+    autoTune: false,
+    metricPatterns: [],
     ...overrides,
   };
   validateConfig(config);

@@ -215,7 +215,12 @@ def _build_expanded_query(
     queries: list[str],
     ledger: AnchorLedger | None,
 ) -> str:
-    """Build expanded query from user queries + anchor ledger ACTIVE_CONTEXT and ERRORS."""
+    """Build expanded query from user queries + anchor ledger context.
+
+    Includes ACTIVE_CONTEXT, ERRORS, and high-value IDENTIFIERS (Metric:,
+    Amount:, ID: prefixed facts) to improve relevance scoring for data-rich
+    conversations where domain metrics are central to the task.
+    """
     parts = list(queries)
     if ledger is not None:
         from memosift.core.types import AnchorCategory
@@ -224,6 +229,11 @@ def _build_expanded_query(
             parts.append(fact.content)
         for fact in ledger.facts_by_category(AnchorCategory.ERRORS):
             parts.append(fact.content)
+        # Include high-value identifiers (metrics, amounts, IDs) for query expansion.
+        _high_value_prefixes = ("Metric:", "Amount:", "ID:")
+        for fact in ledger.facts_by_category(AnchorCategory.IDENTIFIERS):
+            if fact.content.startswith(_high_value_prefixes):
+                parts.append(fact.content)
     return " ".join(parts)
 
 

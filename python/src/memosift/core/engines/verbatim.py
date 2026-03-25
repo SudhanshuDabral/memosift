@@ -53,6 +53,7 @@ def verbatim_compress(
     seen_content_hashes: dict[str, int] | None = None,
     *,
     enable_observation_masking: bool = False,
+    cache: object | None = None,
 ) -> list[ClassifiedMessage]:
     """Apply verbatim deletion to eligible segments.
 
@@ -131,6 +132,9 @@ def verbatim_compress(
         ):
             placeholder = _mask_old_observation(seg, ledger=ledger)
             if placeholder is not None:
+                # Store original in cache for potential re-expansion.
+                if cache is not None and hasattr(cache, "store"):
+                    cache.store(seg.original_index, seg.content)
                 new_msg = MemoSiftMessage(
                     role=seg.message.role,
                     content=placeholder,
@@ -357,6 +361,10 @@ def _mask_old_observation(
 ) -> str | None:
     """Create a structural placeholder for an old tool result.
 
+    For JSON content: extracts top-level keys, array lengths, and numeric
+    value ranges — producing a schema-aware summary instead of the generic
+    ``first_two | ... | last`` placeholder.
+
     Preserves lines containing anchor ledger facts.
     """
     tool_name = seg.message.name or "tool"
@@ -371,19 +379,30 @@ def _mask_old_observation(
     line_count = seg.content.count("\n") + 1
     lines = seg.content.strip().split("\n")
 
-    # Structural summary.
-    sigs = [m.group(0).strip() for m in _QUICK_SIG_RE.finditer(seg.content)]
-    if sigs:
-        summary = "; ".join(sigs[:4])
-    elif len(lines) <= 3:
-        summary = seg.content[:200]
-    else:
-        first_two = " | ".join(ln.strip() for ln in lines[:2] if ln.strip())
-        last = lines[-1].strip() or (lines[-2].strip() if len(lines) > 1 else "")
-        summary = f"{first_two} ... {last}"[:200]
+    # JSON-aware structural summary.
+    summary = _json_structural_summary(seg.content)
+    if summary is None:
+        # Fallback: code signatures or generic first/last lines.
+        sigs = [m.group(0).strip() for m in _QUICK_SIG_RE.finditer(seg.content)]
+        if sigs:
+            summary = "; ".join(sigs[:4])
+        elif len(lines) <= 3:
+            summary = seg.content[:200]
+        else:
+            first_two = " | ".join(ln.strip() for ln in lines[:2] if ln.strip())
+            last = lines[-1].strip() or (lines[-2].strip() if len(lines) > 1 else "")
+            summary = f"{first_two} ... {last}"[:200]
 
     args_display = f'("{key_args}")' if key_args else ""
-    parts = [f"[Tool: {tool_name}{args_display} — {line_count} lines]", f"Key: {summary}"]
+    parts = [f"[Tool: {tool_name}{args_display} -- {line_count} lines]", f"Key: {summary}"]
+
+    # Preserve ALL file paths found in the content (not just the first).
+    # This prevents secondary file paths (imports, references, error traces)
+    # from being lost during observation masking.
+    all_paths = _FILE_PATH_RE.findall(seg.content)
+    if all_paths:
+        unique_paths = list(dict.fromkeys(all_paths))[:15]  # Dedup, cap at 15.
+        parts.append("Files: " + ", ".join(unique_paths))
 
     # Preserve lines containing critical anchor facts.
     if ledger is not None:
@@ -402,3 +421,67 @@ def _mask_old_observation(
                 parts.append("Preserved: " + " | ".join(preserved[:10]))
 
     return "\n".join(parts)
+
+
+def _json_structural_summary(text: str) -> str | None:
+    """Extract a schema-aware summary from JSON content.
+
+    Returns a concise string with top-level keys, array lengths, and numeric
+    value ranges. Returns None if the content is not valid JSON.
+    """
+    import json as _json
+
+    stripped = text.strip()
+    try:
+        data = _json.loads(stripped)
+    except (ValueError, _json.JSONDecodeError):
+        return None
+
+    parts: list[str] = []
+
+    if isinstance(data, dict):
+        for key, value in list(data.items())[:8]:
+            if isinstance(value, list):
+                parts.append(f"{key}: [{len(value)} items]")
+                # Extract numeric ranges from array values.
+                _append_numeric_ranges(parts, key, value)
+            elif isinstance(value, dict):
+                sub_keys = list(value.keys())[:5]
+                parts.append(f"{key}: {{{', '.join(sub_keys)}}}")
+            elif isinstance(value, (int, float)):
+                parts.append(f"{key}: {value}")
+            elif isinstance(value, str) and len(value) <= 60:
+                parts.append(f"{key}: {value!r}")
+            else:
+                parts.append(f"{key}: ({type(value).__name__})")
+    elif isinstance(data, list):
+        parts.append(f"[{len(data)} items]")
+        _append_numeric_ranges(parts, "_root", data)
+    else:
+        return None
+
+    return " | ".join(parts)[:300] if parts else None
+
+
+def _append_numeric_ranges(
+    parts: list[str], key: str, items: list[object]
+) -> None:
+    """Append min/max ranges for numeric fields in an array to parts."""
+    if not items:
+        return
+    # Flat numeric array.
+    nums = [v for v in items if isinstance(v, (int, float))]
+    if nums and len(nums) >= 3:
+        parts.append(f"  {key} range: {min(nums)}-{max(nums)}")
+        return
+    # Array of dicts — compute ranges per numeric key.
+    if all(isinstance(v, dict) for v in items[:5]):
+        sample = items[:50]
+        for field_key in list(items[0].keys())[:6] if isinstance(items[0], dict) else []:
+            field_nums = [
+                item[field_key]
+                for item in sample
+                if isinstance(item, dict) and isinstance(item.get(field_key), (int, float))
+            ]
+            if field_nums and len(field_nums) >= 2:
+                parts.append(f"  {field_key}: {min(field_nums)}-{max(field_nums)}")
